@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     const stripe = stripeClient();
 
     const priceId =
-      process.env.STRIPE_PRICE_ID ??
+      process.env.STRIPE_PRICE_ID?.trim() ||
       "price_1U7WrIDIbWZDEkGRmC5yqD9s";
 
     const siteUrl =
