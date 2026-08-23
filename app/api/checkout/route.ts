@@ -44,41 +44,32 @@ export async function POST(request: Request) {
 
     const session = await stripe.checkout.sessions.create({
       mode: "subscription",
-
       line_items: [
         {
           price: priceId,
-          quantity: 1,
-        },
+          quantity: 1
+        }
       ],
-
       success_url: `${siteUrl}/dashboard?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${siteUrl}/dashboard?checkout=cancelled`,
-
       client_reference_id: membership.company_id,
-
       customer: subscription?.provider_customer_id || undefined,
-
       customer_email: subscription?.provider_customer_id
         ? undefined
         : (claims.email as string | undefined),
-
       allow_promotion_codes: true,
-
       metadata: {
         company_id: membership.company_id,
         user_id: claims.sub,
-        plan_code: "pro",
+        plan_code: "pro"
       },
-
       subscription_data: {
         metadata: {
           company_id: membership.company_id,
-          plan_code: "pro",
-        },
+          plan_code: "pro"
+        }
       },
-
-      integration_identifier: "projectsignal_checkout_qkzpmvta",
+      integration_identifier: "projectsignal_checkout_qkzpmvta"
     });
 
     if (!session.url) {

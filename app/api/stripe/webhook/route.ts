@@ -3,11 +3,15 @@ import { NextResponse } from "next/server";
 import { headers } from "next/headers";
 import { stripeClient } from "@/lib/stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  getSubscriptionCurrentPeriodEnd,
+  stripeUnixToIso
+} from "@/lib/billing/subscription";
 
 export const runtime = "nodejs";
 
 function mapStatus(status: string) {
-  const allowed = new Set(["trialing","active","past_due","canceled","paused","incomplete"]);
+  const allowed = new Set(["trialing", "active", "past_due", "canceled", "paused", "incomplete"]);
   if (allowed.has(status)) return status;
   if (status === "unpaid") return "past_due";
   if (status === "incomplete_expired") return "canceled";
@@ -19,7 +23,34 @@ function asId(value: string | { id: string } | null | undefined) {
   return typeof value === "string" ? value : value.id;
 }
 
-async function syncSubscription(subscription: Stripe.Subscription) {
+async function activateInitialCounties(
+  companyId: string,
+  effectiveAt: string,
+  lockedUntil: string | null,
+  stripeEventId: string | null
+) {
+  const admin = createAdminClient();
+
+  await admin.rpc("activate_initial_company_counties", {
+    p_company_id: companyId,
+    p_effective_at: effectiveAt,
+    p_locked_until: lockedUntil,
+    p_stripe_event_id: stripeEventId
+  });
+
+  if (lockedUntil) {
+    await admin
+      .from("company_counties")
+      .update({ locked_until: lockedUntil })
+      .eq("company_id", companyId)
+      .eq("status", "active");
+  }
+}
+
+async function syncSubscription(
+  subscription: Stripe.Subscription,
+  stripeEventId: string | null = null
+) {
   const admin = createAdminClient();
   const companyFromMetadata = subscription.metadata?.company_id;
   const subscriptionId = subscription.id;
@@ -37,22 +68,34 @@ async function syncSubscription(subscription: Stripe.Subscription) {
 
   if (!companyId) return;
 
-  const currentPeriodEnd =
-    // Stripe's current SDK exposes this on Subscription.
-    (subscription as any).current_period_end
-      ? new Date((subscription as any).current_period_end * 1000).toISOString()
-      : null;
+  const currentPeriodEndUnix = getSubscriptionCurrentPeriodEnd(subscription);
+  const currentPeriodEnd = stripeUnixToIso(currentPeriodEndUnix);
+  const mappedStatus = mapStatus(subscription.status);
 
   await admin
     .from("subscriptions")
     .update({
       provider_customer_id: customerId,
       provider_subscription_id: subscriptionId,
-      status: mapStatus(subscription.status),
+      status: mappedStatus,
       current_period_ends_at: currentPeriodEnd,
       cancel_at_period_end: subscription.cancel_at_period_end
     })
     .eq("company_id", companyId);
+
+  if (mappedStatus === "active") {
+    const startUnix =
+      typeof (subscription as any).start_date === "number"
+        ? (subscription as any).start_date
+        : subscription.created;
+
+    await activateInitialCounties(
+      companyId,
+      stripeUnixToIso(startUnix) ?? new Date().toISOString(),
+      currentPeriodEnd,
+      stripeEventId
+    );
+  }
 }
 
 export async function POST(request: Request) {
@@ -80,15 +123,28 @@ export async function POST(request: Request) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       const companyId = session.metadata?.company_id || session.client_reference_id;
+      const checkoutActivated =
+        session.payment_status === "paid" ||
+        session.payment_status === "no_payment_required";
+
       if (companyId) {
         await admin
           .from("subscriptions")
           .update({
             provider_customer_id: asId(session.customer),
             provider_subscription_id: asId(session.subscription),
-            status: session.payment_status === "paid" ? "active" : "incomplete"
+            status: checkoutActivated ? "active" : "incomplete"
           })
           .eq("company_id", companyId);
+
+        if (checkoutActivated) {
+          await activateInitialCounties(
+            companyId,
+            stripeUnixToIso(event.created) ?? new Date().toISOString(),
+            null,
+            event.id
+          );
+        }
       }
       break;
     }
@@ -96,7 +152,7 @@ export async function POST(request: Request) {
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted":
-      await syncSubscription(event.data.object as Stripe.Subscription);
+      await syncSubscription(event.data.object as Stripe.Subscription, event.id);
       break;
 
     case "invoice.payment_failed": {

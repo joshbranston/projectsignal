@@ -97,3 +97,85 @@ input:focus, select:focus { border-color: #84a4ff; box-shadow: 0 0 0 3px #e8efff
   .main { padding: 20px; }
   .navlinks a:not(.btn) { display:none; }
 }
+
+/* ProjectSignal county territory */
+.onboarding-address-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.onboarding-preferences-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.county-selector { display: grid; gap: 12px; }
+.county-selector-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.county-selector-head strong { white-space: nowrap; }
+.county-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; max-height: 390px; overflow: auto; padding: 2px; }
+.county-option { min-height: 68px; border: 1px solid var(--line); border-radius: 11px; background: white; padding: 10px; text-align: left; display: flex; flex-direction: column; justify-content: space-between; color: var(--text); }
+.county-option span { font-weight: 750; }
+.county-option small { color: var(--muted); font-size: 11px; }
+.county-option:hover:not(:disabled) { border-color: #84a4ff; box-shadow: 0 0 0 2px #e8efff; }
+.county-option.selected { border-color: var(--accent); background: #eff4ff; }
+.county-option.selected small { color: #3538cd; font-weight: 750; }
+.county-option.locked { opacity: .48; cursor: not-allowed; }
+.territory-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.territory-chip { display: inline-flex; padding: 6px 10px; border-radius: 999px; background: #eff4ff; color: #3538cd; font-size: 12px; font-weight: 750; }
+@media (max-width: 900px) {
+  .county-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .onboarding-address-grid, .onboarding-preferences-grid { grid-template-columns: 1fr; }
+}
+
+/* Interactive England territory map */
+.county-map-wrap {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #f8fafc;
+  padding: 14px;
+}
+.county-map {
+  width: 100%;
+  max-height: 620px;
+  min-height: 360px;
+  display: block;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f8fbff 0%, #eef4fa 100%);
+}
+.county-map-loading {
+  min-height: 220px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 14px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 28px;
+  text-align: center;
+}
+.county-shape {
+  stroke: #ffffff;
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+  transition: opacity .14s ease, fill .14s ease, stroke .14s ease;
+  outline: none;
+}
+.county-shape.coverage-live { fill: #c9f2df; }
+.county-shape.coverage-partial { fill: #fde9b4; }
+.county-shape.coverage-coming_soon { fill: #e5e7eb; }
+.county-shape.coverage-degraded { fill: #fecaca; }
+.county-shape.clickable { cursor: pointer; }
+.county-shape.clickable:hover,
+.county-shape.clickable:focus { stroke: #4f7cff; stroke-width: 3; }
+.county-shape.selected { fill: #4f7cff; stroke: #243b80; stroke-width: 2.5; }
+.county-shape.locked { opacity: .45; cursor: not-allowed; }
+.business-pin-halo { fill: rgba(20, 29, 47, .18); }
+.business-pin-dot { fill: #141d2f; stroke: #ffffff; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.county-map-legend { display: flex; flex-wrap: wrap; gap: 12px 18px; color: var(--muted); font-size: 12px; }
+.county-map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend-dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 1px solid rgba(17,24,39,.12); }
+.legend-dot.selected { background: #4f7cff; }
+.legend-dot.live { background: #c9f2df; }
+.legend-dot.partial { background: #fde9b4; }
+.legend-dot.soon { background: #e5e7eb; }
+.legend-pin { width: 10px; height: 10px; border-radius: 999px; background: #141d2f; display: inline-block; box-shadow: 0 0 0 3px rgba(20,29,47,.16); }
+.county-pin-status { margin: 6px 0 0; font-size: 12px; color: #475467; }
+@media (max-width: 700px) {
+  .county-map { min-height: 300px; }
+}
