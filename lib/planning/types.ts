@@ -42,6 +42,9 @@ export type PlanningSourceConfig = {
   lookbackDays?: number;
   maxPages?: number;
   searchDateField?: "validated" | "received";
+  provider?: string;
+  authority?: string;
+  pageSize?: number;
 };
 
 export interface PlanningSourceRecord {

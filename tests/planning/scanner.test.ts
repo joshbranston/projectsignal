@@ -75,3 +75,42 @@ test("fetchPlanningApplications dispatches Idox sources to the Idox adapter", as
     globalThis.fetch = originalFetch;
   }
 });
+
+test("fetchPlanningApplications dispatches PlanIt custom sources to the PlanIt adapter", async () => {
+  const originalFetch = globalThis.fetch;
+  const planItSource: PlanningSourceRecord = {
+    ...source("north-west-leicestershire"),
+    adapter: "custom",
+    endpointUrl: "https://www.planit.org.uk/api/applics/json",
+    format: "json",
+    config: {
+      provider: "planit",
+      authority: "North West Leicestershire",
+      lookbackDays: 7,
+      pageSize: 100,
+      maxPages: 1
+    }
+  };
+
+  globalThis.fetch = async () => Response.json({
+    total: 1,
+    from: 0,
+    to: 0,
+    records: [
+      {
+        uid: "26/00456/FUL",
+        description: "Replacement windows",
+        address: "Coalville LE67 3AA",
+        start_date: "2026-08-20"
+      }
+    ]
+  });
+
+  try {
+    const applications = await fetchPlanningApplications(planItSource);
+    assert.equal(applications.length, 1);
+    assert.equal(applications[0].externalReference, "26/00456/FUL");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
