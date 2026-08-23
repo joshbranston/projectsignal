@@ -1,4 +1,5 @@
 import { fetchCsvApplications } from "./adapters/csv.ts";
+import { fetchIdoxApplications } from "./adapters/idox.ts";
 import { ingestApplications } from "./ingest.ts";
 import { matchCountyLeads } from "./matching.ts";
 import { scoreSavedApplications } from "./scoring.ts";
@@ -105,19 +106,22 @@ export function planningSourceFromRow(row: any): PlanningSourceRecord {
   };
 }
 
+export async function fetchPlanningApplications(source: PlanningSourceRecord) {
+  switch (source.adapter) {
+    case "csv":
+      return fetchCsvApplications(source);
+    case "idox_public_access":
+      return fetchIdoxApplications(source);
+    default:
+      throw new Error(`Unsupported planning source adapter: ${source.adapter}`);
+  }
+}
+
 export async function scanOnePlanningSource(
   admin: any,
   source: PlanningSourceRecord
 ): Promise<SourceScanStats> {
-  let applications;
-
-  switch (source.adapter) {
-    case "csv":
-      applications = await fetchCsvApplications(source);
-      break;
-    default:
-      throw new Error(`Unsupported planning source adapter: ${source.adapter}`);
-  }
+  const applications = await fetchPlanningApplications(source);
 
   const { data: trade, error: tradeError } = await admin
     .from("trades")

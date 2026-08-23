@@ -39,6 +39,9 @@ export type PlanningApplicationField =
 export type PlanningSourceConfig = {
   fields?: Partial<Record<PlanningApplicationField, string>>;
   requestHeaders?: Record<string, string>;
+  lookbackDays?: number;
+  maxPages?: number;
+  searchDateField?: "validated" | "received";
 };
 
 export interface PlanningSourceRecord {
