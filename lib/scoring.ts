@@ -5,22 +5,51 @@ export function extractPostcode(address: string) {
   return match ? match[1].toUpperCase().replace(/\s+/g, " ") : "";
 }
 
-const positiveRules: Array<[RegExp, number, string]> = [
+const explicitGlazingRules: Array<[RegExp, number, string]> = [
   [/\bbi[- ]?fold/i, 3.5, "bifold doors"],
   [/\bglaz(?:e|ed|ing)\b/i, 3.0, "glazing"],
   [/\breplacement windows?\b/i, 3.5, "replacement windows"],
   [/\bwindows?\b/i, 2.4, "windows"],
   [/\bdoors?\b/i, 2.0, "doors"],
-  [/\bshopfront\b/i, 2.4, "shopfront"],
-  [/\bnew build\b|\bnew dwelling\b|\berection of (?:a |an )?dwelling\b/i, 2.8, "new dwelling"],
-  [/\b\d+\s+(?:new\s+)?dwellings?\b|\bresidential development\b/i, 3.0, "multi-unit residential"],
-  [/\btwo[- ]storey\b|\btwo storey\b/i, 1.7, "two-storey extension"],
-  [/\bsingle[- ]storey\b|\bsingle storey\b/i, 1.1, "single-storey extension"],
-  [/\brear extension\b|\bside extension\b|\bfront extension\b|\bextension\b/i, 1.5, "extension"],
-  [/\bconversion\b/i, 0.9, "conversion"],
-  [/\bconservatory\b|\borangery\b/i, 1.8, "conservatory/orangery"],
-  [/\bdormer\b|\bloft conversion\b/i, 0.8, "loft/dormer"],
-  [/\bdemolition\b.*\berection\b/i, 1.1, "redevelopment"]
+  [/\bshopfront\b/i, 2.4, "shopfront"]
+];
+
+// Planning descriptions often omit windows and doors even when the project
+// will almost certainly require them. Only the strongest matching implied
+// project signal is applied so overlapping phrases do not inflate the score.
+const impliedProjectRules: Array<[RegExp, number, string]> = [
+  [
+    /\bfirst[- ]floor\b[\s\S]{0,100}\bextension\b|\bextension\b[\s\S]{0,100}\bfirst[- ]floor\b/i,
+    5.5,
+    "first-floor extension"
+  ],
+  [
+    /\btwo[- ]storey\b[\s\S]{0,100}\bextension\b|\bextension\b[\s\S]{0,100}\btwo[- ]storey\b/i,
+    5.5,
+    "two-storey extension"
+  ],
+  [/\b\d+\s+(?:new\s+)?dwellings?\b|\bresidential development\b/i, 5.8, "multi-unit residential"],
+  [
+    /\bnew build\b|\bnew dwelling\b|\berection of (?:a |an |one )?dwelling\b/i,
+    5.5,
+    "new dwelling"
+  ],
+  [/\bconservatory\b|\borangery\b/i, 5.5, "conservatory/orangery"],
+  [
+    /\bconversion\b[\s\S]{0,80}\b(?:dwelling|residential)\b|\b(?:barn|garage|outbuilding)\s+conversion\b/i,
+    5.5,
+    "residential conversion"
+  ],
+  [
+    /\bsingle[- ]storey\b[\s\S]{0,100}\bextension\b|\bextension\b[\s\S]{0,100}\bsingle[- ]storey\b/i,
+    3.9,
+    "single-storey extension"
+  ],
+  [/\b(?:rear|side|front)\s+extension\b/i, 3.9, "extension"],
+  [/\bdormer\b|\bloft conversion\b/i, 3.9, "loft/dormer"],
+  [/\bdemolition\b[\s\S]*\berection\b/i, 3.9, "redevelopment"],
+  [/\bextension\b/i, 3.6, "extension"],
+  [/\bconversion\b/i, 2.5, "conversion"]
 ];
 
 const negativeRules: Array<[RegExp, number, string]> = [
@@ -41,11 +70,13 @@ function valueBand(text: string) {
     if (n >= 3) return [25000, 100000] as const;
     return [15000, 50000] as const;
   }
-  if (/new dwelling|new build|erection of (?:a )?dwelling/.test(t)) return [10000, 30000] as const;
-  if (/two[- ]storey/.test(t)) return [8000, 25000] as const;
+  if (/new dwelling|new build|erection of (?:a |an |one )?dwelling/.test(t)) return [10000, 30000] as const;
+  if (/first[- ]floor|two[- ]storey/.test(t)) return [8000, 25000] as const;
   if (/bifold|bi-fold|glazing|replacement windows/.test(t)) return [5000, 20000] as const;
-  if (/single[- ]storey|extension/.test(t)) return [5000, 15000] as const;
-  if (/conservatory|orangery/.test(t)) return [4000, 15000] as const;
+  if (/single[- ]storey|rear extension|side extension|front extension|extension/.test(t)) return [5000, 15000] as const;
+  if (/conservatory|orangery/.test(t)) return [5000, 15000] as const;
+  if (/dormer|loft conversion/.test(t)) return [5000, 15000] as const;
+  if (/conversion/.test(t)) return [5000, 20000] as const;
   if (/shopfront/.test(t)) return [5000, 25000] as const;
   return [2000, 10000] as const;
 }
@@ -56,11 +87,23 @@ export function scoreWindowsOpportunity(proposal: string, address = "", decision
   const positives: string[] = [];
   const negatives: string[] = [];
 
-  for (const [rule, points, tag] of positiveRules) {
+  for (const [rule, points, tag] of explicitGlazingRules) {
     if (rule.test(text)) {
       score += points;
       positives.push(tag);
     }
+  }
+
+  let impliedSignal: { points: number; tag: string } | null = null;
+  for (const [rule, points, tag] of impliedProjectRules) {
+    if (rule.test(text) && (!impliedSignal || points > impliedSignal.points)) {
+      impliedSignal = { points, tag };
+    }
+  }
+
+  if (impliedSignal) {
+    score += impliedSignal.points;
+    positives.push(impliedSignal.tag);
   }
 
   for (const [rule, points, tag] of negativeRules) {
