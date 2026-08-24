@@ -1,5 +1,5 @@
 import { extractPostcode } from "../../scoring.ts";
-import type { NormalisedPlanningApplication } from "../types.ts";
+import type { NormalisedPlanningApplication, PlanningSourceRecord } from "../types.ts";
 
 function decodeHtml(value: string) {
   return value
@@ -144,6 +144,115 @@ function basePortalUrl(endpointUrl: string) {
   return endpointUrl.endsWith("/") ? endpointUrl : `${endpointUrl}/`;
 }
 
+function requestHeaderValues(headers?: HeadersInit) {
+  if (!headers) return [];
+
+  try {
+    return Array.from(new Headers(headers).entries())
+      .filter(([, value]) => Boolean(value))
+      .map(([, value]) => value);
+  } catch {
+    return [];
+  }
+}
+
+function diagnosticText(value: unknown, redactedValues: string[]) {
+  let text = String(value)
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  for (const redactedValue of [...new Set(redactedValues)].sort((a, b) => b.length - a.length)) {
+    text = text.split(redactedValue).join("[REDACTED]");
+  }
+
+  return text
+    .replace(
+      /\b(?:authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key)\s*[:=][^\r\n]*/gi,
+      "[REDACTED]"
+    )
+    .slice(0, 300);
+}
+
+function transportErrorSummary(failure: unknown, redactedValues: string[]) {
+  const parts: string[] = [];
+  const seen = new Set<unknown>();
+  let current: unknown = failure;
+
+  while (current !== undefined && current !== null && parts.length < 5 && !seen.has(current)) {
+    seen.add(current);
+
+    if (typeof current !== "object") {
+      parts.push(diagnosticText(current, redactedValues));
+      break;
+    }
+
+    const record = current as Record<string, unknown>;
+    const name = record.name ? diagnosticText(record.name, redactedValues) : "Error";
+    const code = record.code ? diagnosticText(record.code, redactedValues) : "";
+    const message = record.message ? diagnosticText(record.message, redactedValues) : "";
+    const label = code ? `${name}[${code}]` : name;
+    parts.push(message ? `${label}: ${message}` : label);
+    current = record.cause;
+  }
+
+  return parts.join("; cause=") || "Unknown transport error";
+}
+
+function idoxTransportError(
+  source: PlanningSourceRecord,
+  action: string,
+  failure: unknown,
+  redactedValues: string[] = []
+) {
+  const host = new URL(source.endpointUrl).hostname;
+  const sensitiveValues = [
+    ...requestHeaderValues(source.config.requestHeaders),
+    ...redactedValues
+  ];
+  return new Error(
+    `${source.councilName} Idox ${action} failed ` +
+    `(portal=${source.councilSlug}, host=${host}): ${transportErrorSummary(failure, sensitiveValues)}`,
+    { cause: failure }
+  );
+}
+
+async function fetchIdoxRequest(
+  source: PlanningSourceRecord,
+  operation: string,
+  input: string,
+  init: RequestInit,
+  requestTimeoutMs: number,
+  redactedValues: string[] = []
+) {
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: init.signal ?? AbortSignal.timeout(requestTimeoutMs)
+    });
+  } catch (failure) {
+    throw idoxTransportError(
+      source,
+      `${operation} request`,
+      failure,
+      [...requestHeaderValues(init.headers), ...redactedValues]
+    );
+  }
+}
+
+async function readIdoxText(
+  source: PlanningSourceRecord,
+  operation: string,
+  response: Response,
+  redactedValues: string[] = []
+) {
+  try {
+    return await response.text();
+  } catch (failure) {
+    throw idoxTransportError(source, `${operation} response`, failure, redactedValues);
+  }
+}
+
 function formatUkDate(date: Date) {
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${date.getUTCFullYear()}`;
 }
@@ -192,16 +301,18 @@ export type IdoxFetchOptions = {
   now?: Date;
   lookbackDays?: number;
   maxPages?: number;
+  requestTimeoutMs?: number;
 };
 
 export async function fetchIdoxApplications(
-  source: import("../types.ts").PlanningSourceRecord,
+  source: PlanningSourceRecord,
   options: IdoxFetchOptions = {}
 ): Promise<NormalisedPlanningApplication[]> {
   const baseUrl = basePortalUrl(source.endpointUrl);
   const now = options.now ?? new Date();
   const lookbackDays = Math.max(1, Math.min(options.lookbackDays ?? Number(source.config.lookbackDays ?? 7), 31));
   const maxPages = Math.max(1, Math.min(options.maxPages ?? Number(source.config.maxPages ?? 10), 25));
+  const requestTimeoutMs = Math.max(1, Math.min(options.requestTimeoutMs ?? 15_000, 30_000));
   const searchDateField = source.config.searchDateField ?? "validated";
   const start = new Date(now.getTime() - lookbackDays * 86_400_000);
   const advancedUrl = new URL("search.do?action=advanced", baseUrl).toString();
@@ -210,8 +321,14 @@ export async function fetchIdoxApplications(
     "user-agent": "ProjectSignal/0.3 planning source scanner",
     ...(source.config?.requestHeaders ?? {})
   };
+  const request = (
+    operation: string,
+    input: string,
+    init: RequestInit,
+    redactedValues: string[] = []
+  ) => fetchIdoxRequest(source, operation, input, init, requestTimeoutMs, redactedValues);
 
-  const session = await fetch(advancedUrl, {
+  const session = await request("open-search-page", advancedUrl, {
     headers: commonHeaders,
     cache: "no-store"
   });
@@ -220,7 +337,12 @@ export async function fetchIdoxApplications(
   }
 
   const cookie = sessionCookie(session);
-  const advancedHtml = await session.text();
+  const advancedHtml = await readIdoxText(
+    source,
+    "read-search-page",
+    session,
+    cookie ? [cookie] : []
+  );
   const csrf = csrfToken(advancedHtml);
   if (!csrf) {
     throw new Error(`${source.councilName} Idox search page did not provide a CSRF token`);
@@ -235,22 +357,33 @@ export async function fetchIdoxApplications(
     [`date(${datePrefix}End)`]: formatUkDate(now)
   });
 
-  const searchResponse = await fetch(resultsUrl, {
-    method: "POST",
-    headers: {
-      ...commonHeaders,
-      "content-type": "application/x-www-form-urlencoded",
-      referer: advancedUrl,
-      ...(cookie ? { cookie } : {})
+  const searchResponse = await request(
+    "submit-search",
+    resultsUrl,
+    {
+      method: "POST",
+      headers: {
+        ...commonHeaders,
+        "content-type": "application/x-www-form-urlencoded",
+        referer: advancedUrl,
+        ...(cookie ? { cookie } : {})
+      },
+      body,
+      cache: "no-store"
     },
-    body,
-    cache: "no-store"
-  });
+    [csrf]
+  );
   if (!searchResponse.ok) {
     throw new Error(`${source.councilName} Idox search returned ${searchResponse.status}`);
   }
 
-  const firstHtml = await searchResponse.text();
+  const sessionValues = cookie ? [csrf, cookie] : [csrf];
+  const firstHtml = await readIdoxText(
+    source,
+    "read-search-results",
+    searchResponse,
+    sessionValues
+  );
   const detailLinks = parseIdoxSearchResultLinks(firstHtml, baseUrl);
 
   // Some Idox installations redirect directly to the only matching result.
@@ -261,12 +394,18 @@ export async function fetchIdoxApplications(
 
   const pageLinks = parseIdoxPagedSearchLinks(firstHtml, baseUrl).slice(0, Math.max(0, maxPages - 1));
   for (const pageUrl of pageLinks) {
-    const page = await fetch(pageUrl, {
+    const page = await request("load-results-page", pageUrl, {
       headers: { ...commonHeaders, ...(cookie ? { cookie } : {}) },
       cache: "no-store"
     });
     if (!page.ok) continue;
-    for (const link of parseIdoxSearchResultLinks(await page.text(), baseUrl)) {
+    const pageHtml = await readIdoxText(
+      source,
+      "read-results-page",
+      page,
+      cookie ? [cookie] : []
+    );
+    for (const link of parseIdoxSearchResultLinks(pageHtml, baseUrl)) {
       if (!detailLinks.includes(link)) detailLinks.push(link);
     }
   }
@@ -274,19 +413,27 @@ export async function fetchIdoxApplications(
   const applications: NormalisedPlanningApplication[] = [];
   for (const summaryUrl of detailLinks) {
     const [summaryResponse, detailsResponse] = await Promise.all([
-      fetch(detailTabUrl(summaryUrl, "summary"), {
+      request("load-summary", detailTabUrl(summaryUrl, "summary"), {
         headers: { ...commonHeaders, ...(cookie ? { cookie } : {}) },
         cache: "no-store"
       }),
-      fetch(detailTabUrl(summaryUrl, "details"), {
+      request("load-details", detailTabUrl(summaryUrl, "details"), {
         headers: { ...commonHeaders, ...(cookie ? { cookie } : {}) },
         cache: "no-store"
       })
     ]);
 
     if (!summaryResponse.ok) continue;
-    const summaryHtml = await summaryResponse.text();
-    const detailsHtml = detailsResponse.ok ? await detailsResponse.text() : "";
+    const sessionCookieValues = cookie ? [cookie] : [];
+    const summaryHtml = await readIdoxText(
+      source,
+      "read-summary",
+      summaryResponse,
+      sessionCookieValues
+    );
+    const detailsHtml = detailsResponse.ok
+      ? await readIdoxText(source, "read-details", detailsResponse, sessionCookieValues)
+      : "";
     const application = parseIdoxApplicationHtml({
       summaryHtml,
       detailsHtml,
