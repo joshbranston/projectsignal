@@ -156,13 +156,32 @@ function requestHeaderValues(headers?: HeadersInit) {
   }
 }
 
+function redactionFragments(values: string[]) {
+  const fragments = new Set<string>();
+
+  for (const value of values) {
+    if (!value) continue;
+    fragments.add(value);
+
+    const authorization = value.match(/^(?:basic|bearer)\s+(.+)$/i)?.[1];
+    if (authorization) fragments.add(authorization);
+
+    for (const segment of value.split(/;\s*/)) {
+      const cookieValue = segment.match(/^[A-Za-z0-9_.-]+=([^;]*)$/)?.[1];
+      if (cookieValue) fragments.add(cookieValue);
+    }
+  }
+
+  return [...fragments].sort((a, b) => b.length - a.length);
+}
+
 function diagnosticText(value: unknown, redactedValues: string[]) {
   let text = String(value)
     .replace(/[\r\n\t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 
-  for (const redactedValue of [...new Set(redactedValues)].sort((a, b) => b.length - a.length)) {
+  for (const redactedValue of redactionFragments(redactedValues)) {
     text = text.split(redactedValue).join("[REDACTED]");
   }
 
@@ -253,6 +272,74 @@ async function readIdoxText(
   }
 }
 
+function responseBodyClue(body: string, redactedValues: string[]) {
+  const clues: string[] = [];
+  const candidates: Array<[string, RegExp]> = [
+    ["title", /<title\b[^>]*>([\s\S]*?)<\/title>/i],
+    ["h1", /<h1\b[^>]*>([\s\S]*?)<\/h1>/i]
+  ];
+
+  for (const [label, pattern] of candidates) {
+    const match = body.match(pattern);
+    if (!match) continue;
+
+    try {
+      const value = diagnosticText(cleanHtml(match[1]), redactedValues).slice(0, 120);
+      if (value) clues.push(`${label}=${value}`);
+    } catch {
+      // A malformed error page must not obscure the HTTP status itself.
+    }
+  }
+
+  return clues.join("; ") || `body=${body.trim() ? "non-empty" : "empty"}`;
+}
+
+async function idoxHttpRejectionError(
+  source: PlanningSourceRecord,
+  operation: string,
+  requestUrl: string,
+  response: Response,
+  redactedValues: string[] = []
+) {
+  const responseCookie = sessionCookie(response);
+  const sensitiveValues = [
+    ...requestHeaderValues(source.config.requestHeaders),
+    ...redactedValues,
+    ...(responseCookie ? [responseCookie] : [])
+  ];
+  let body = "";
+  let bodyFailure: unknown;
+
+  try {
+    body = await response.text();
+  } catch (failure) {
+    bodyFailure = failure;
+  }
+
+  let host = new URL(source.endpointUrl).hostname;
+  try {
+    host = new URL(response.url || requestUrl).hostname;
+  } catch {
+    // Fall back to the configured portal hostname.
+  }
+
+  const contentType = diagnosticText(
+    response.headers.get("content-type") ?? "unknown",
+    sensitiveValues
+  );
+  const statusText = diagnosticText(response.statusText || "unknown", sensitiveValues);
+  const clue = bodyFailure
+    ? `body=unreadable (${transportErrorSummary(bodyFailure, sensitiveValues)})`
+    : responseBodyClue(body, sensitiveValues);
+  const error = new Error(
+    `${source.councilName} Idox ${operation} rejected ` +
+    `(portal=${source.councilSlug}, host=${host}, status=${response.status}, ` +
+    `content-type=${contentType}, status-text=${statusText}, clue=${clue})`,
+    bodyFailure ? { cause: bodyFailure } : undefined
+  );
+  return error;
+}
+
 function formatUkDate(date: Date) {
   return `${String(date.getUTCDate()).padStart(2, "0")}/${String(date.getUTCMonth() + 1).padStart(2, "0")}/${date.getUTCFullYear()}`;
 }
@@ -265,6 +352,37 @@ function csrfToken(html: string) {
     return attrs.match(/\bvalue\s*=\s*["']([^"']*)["']/i)?.[1] ?? null;
   }
   return null;
+}
+
+function formAttribute(attributes: string, name: "action" | "method") {
+  const pattern = new RegExp(
+    `(?:^|\\s)${name}\\s*=\\s*(?:["']([^"']*)["']|([^\\s>]+))`,
+    "i"
+  );
+  const match = attributes.match(pattern);
+  return match ? decodeHtml(match[1] ?? match[2] ?? "") : null;
+}
+
+function searchFormActionUrl(html: string, pageUrl: string, fallbackUrl: string) {
+  for (const match of html.matchAll(/<form\b([^>]*)>([\s\S]*?)<\/form>/gi)) {
+    if (!csrfToken(match[2])) continue;
+
+    const method = formAttribute(match[1], "method")?.toLowerCase();
+    if (method && method !== "post") {
+      throw new Error(`Idox advanced search form uses unsupported method ${method.toUpperCase()}`);
+    }
+
+    const action = formAttribute(match[1], "action");
+    if (action === null) return fallbackUrl;
+
+    const resolved = new URL(action, pageUrl);
+    if (resolved.origin !== new URL(pageUrl).origin) {
+      throw new Error("Idox advanced search form action is cross-origin");
+    }
+    return resolved.toString();
+  }
+
+  return fallbackUrl;
 }
 
 function sessionCookie(response: Response) {
@@ -316,7 +434,7 @@ export async function fetchIdoxApplications(
   const searchDateField = source.config.searchDateField ?? "validated";
   const start = new Date(now.getTime() - lookbackDays * 86_400_000);
   const advancedUrl = new URL("search.do?action=advanced", baseUrl).toString();
-  const resultsUrl = new URL("advancedSearchResults.do?action=firstPage", baseUrl).toString();
+  const fallbackResultsUrl = new URL("advancedSearchResults.do?action=firstPage", baseUrl).toString();
   const commonHeaders = {
     "user-agent": "ProjectSignal/0.3 planning source scanner",
     ...(source.config?.requestHeaders ?? {})
@@ -333,7 +451,12 @@ export async function fetchIdoxApplications(
     cache: "no-store"
   });
   if (!session.ok) {
-    throw new Error(`${source.councilName} Idox search page returned ${session.status}`);
+    throw await idoxHttpRejectionError(
+      source,
+      "open-search-page",
+      advancedUrl,
+      session
+    );
   }
 
   const cookie = sessionCookie(session);
@@ -347,6 +470,8 @@ export async function fetchIdoxApplications(
   if (!csrf) {
     throw new Error(`${source.councilName} Idox search page did not provide a CSRF token`);
   }
+  const searchPageUrl = session.url || advancedUrl;
+  const resultsUrl = searchFormActionUrl(advancedHtml, searchPageUrl, fallbackResultsUrl);
 
   const datePrefix = searchDateField === "received" ? "applicationReceived" : "applicationValidated";
   const body = new URLSearchParams({
@@ -365,7 +490,7 @@ export async function fetchIdoxApplications(
       headers: {
         ...commonHeaders,
         "content-type": "application/x-www-form-urlencoded",
-        referer: advancedUrl,
+        referer: searchPageUrl,
         ...(cookie ? { cookie } : {})
       },
       body,
@@ -374,7 +499,13 @@ export async function fetchIdoxApplications(
     [csrf]
   );
   if (!searchResponse.ok) {
-    throw new Error(`${source.councilName} Idox search returned ${searchResponse.status}`);
+    throw await idoxHttpRejectionError(
+      source,
+      "submit-search",
+      resultsUrl,
+      searchResponse,
+      cookie ? [csrf, cookie] : [csrf]
+    );
   }
 
   const sessionValues = cookie ? [csrf, cookie] : [csrf];

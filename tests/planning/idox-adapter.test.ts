@@ -114,6 +114,15 @@ const harboroughSource: PlanningSourceRecord = {
   endpointUrl: "https://pa2.harborough.gov.uk/online-applications/"
 };
 
+const blabySource: PlanningSourceRecord = {
+  ...source,
+  id: "source-blaby",
+  councilId: "council-blaby",
+  councilSlug: "blaby",
+  councilName: "Blaby District Council",
+  endpointUrl: "https://pa.blaby.gov.uk/online-applications/"
+};
+
 test("fetchIdoxApplications reports safe nested transport diagnostics", async () => {
   const originalFetch = globalThis.fetch;
   const nestedCause = Object.assign(new Error("Connect Timeout Error"), {
@@ -400,14 +409,88 @@ test("fetchIdoxApplications bounds upstream requests with an abort timeout", asy
   }
 });
 
-test("fetchIdoxApplications rejects failed upstream search pages", async () => {
+test("fetchIdoxApplications reports safe context for failed upstream search pages", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response("Service unavailable", { status: 503 });
+  globalThis.fetch = async () => new Response("Service unavailable: do-not-log-this-body", {
+    status: 503,
+    statusText: "Service Unavailable",
+    headers: { "content-type": "text/plain; charset=utf-8" }
+  });
 
   try {
     await assert.rejects(
       fetchIdoxApplications(harboroughSource),
-      /Harborough District Council Idox search page returned 503/
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /Harborough District Council Idox open-search-page rejected/);
+        assert.match(error.message, /portal=harborough/);
+        assert.match(error.message, /host=pa2\.harborough\.gov\.uk/);
+        assert.match(error.message, /status=503/);
+        assert.match(error.message, /content-type=text\/plain; charset=utf-8/);
+        assert.match(error.message, /status-text=Service Unavailable/);
+        assert.match(error.message, /body=non-empty/);
+        assert.doesNotMatch(error.message, /do-not-log-this-body/);
+        return true;
+      }
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchIdoxApplications reports sanitized HTML clues for a rejected search POST", async () => {
+  const originalFetch = globalThis.fetch;
+  const csrf = "csrf-private-value";
+  const session = "session-private-value";
+  const responseCookie = "response-private-value";
+  const responseMarker = "full-response-body-must-not-appear";
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith("search.do?action=advanced")) {
+      return new Response(
+        `<form action="advancedSearchResults.do?action=firstPage"><input name="_csrf" value="${csrf}"></form>`,
+        {
+          status: 200,
+          headers: { "set-cookie": `JSESSIONID=${session}; Path=/online-applications; HttpOnly` }
+        }
+      );
+    }
+
+    return new Response(
+      `<html><head><title>403 Forbidden ${csrf}</title></head>` +
+      `<body><h1>Forbidden ${session} ${responseCookie}</h1><p>${responseMarker}</p></body></html>`,
+      {
+        status: 403,
+        statusText: "Forbidden",
+        headers: {
+          "content-type": "text/html; charset=iso-8859-1",
+          "set-cookie": `sensitive-response-cookie=${responseCookie}; Path=/online-applications; HttpOnly`
+        }
+      }
+    );
+  };
+
+  try {
+    await assert.rejects(
+      fetchIdoxApplications(harboroughSource),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /Harborough District Council Idox submit-search rejected/);
+        assert.match(error.message, /portal=harborough/);
+        assert.match(error.message, /host=pa2\.harborough\.gov\.uk/);
+        assert.match(error.message, /status=403/);
+        assert.match(error.message, /content-type=text\/html; charset=iso-8859-1/);
+        assert.match(error.message, /status-text=Forbidden/);
+        assert.match(error.message, /title=403 Forbidden \[REDACTED\]/);
+        assert.match(error.message, /h1=Forbidden \[REDACTED\]/);
+        assert.doesNotMatch(error.message, new RegExp(csrf));
+        assert.doesNotMatch(error.message, new RegExp(session));
+        assert.doesNotMatch(error.message, new RegExp(responseCookie));
+        assert.doesNotMatch(error.message, /sensitive-response-cookie/);
+        assert.doesNotMatch(error.message, new RegExp(responseMarker));
+        return true;
+      }
     );
   } finally {
     globalThis.fetch = originalFetch;
@@ -428,25 +511,110 @@ test("fetchIdoxApplications rejects malformed search pages without a CSRF token"
   }
 });
 
-test("fetchIdoxApplications opens a session, sends CSRF, searches by validated date and fetches application details", async () => {
+test("fetchIdoxApplications preserves the Blaby-style Idox session and search flow", async () => {
   const originalFetch = globalThis.fetch;
-  const calls: Array<{ url: string; method: string; body: string; cookie: string | null }> = [];
+  const calls: Array<{ url: string; body: string; cookie: string | null; referer: string | null }> = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const headers = new Headers(init.headers);
+    const body = init.body instanceof URLSearchParams ? init.body.toString() : String(init.body ?? "");
+    calls.push({
+      url,
+      body,
+      cookie: headers.get("cookie"),
+      referer: headers.get("referer")
+    });
+
+    if (url.endsWith("search.do?action=advanced")) {
+      return new Response(
+        `<form method="post" action="/online-applications/advancedSearchResults.do?action=firstPage">` +
+        `<input type="hidden" name="_csrf" value="blaby-csrf" />` +
+        `<input type="hidden" name="searchType" value="Application" />` +
+        `<input type="hidden" name="caseAddressType" value="Application" />` +
+        `</form>`,
+        {
+          status: 200,
+          headers: { "set-cookie": "JSESSIONID=blaby-session; Path=/online-applications; HttpOnly" }
+        }
+      );
+    }
+
+    if (url.endsWith("advancedSearchResults.do?action=firstPage")) {
+      return new Response("<html><ul id=\"searchresults\"></ul></html>", { status: 200 });
+    }
+
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const applications = await fetchIdoxApplications(blabySource, {
+      now: new Date("2026-08-23T12:00:00Z"),
+      lookbackDays: 7,
+      maxPages: 1
+    });
+
+    assert.deepEqual(applications, []);
+    const searchCall = calls.find((call) => call.url.endsWith("advancedSearchResults.do?action=firstPage"));
+    assert.ok(searchCall);
+    assert.match(searchCall.body, /_csrf=blaby-csrf/);
+    assert.match(searchCall.body, /date%28applicationValidatedStart%29=16%2F08%2F2026/);
+    assert.match(searchCall.body, /date%28applicationValidatedEnd%29=23%2F08%2F2026/);
+    assert.equal(searchCall.cookie, "JSESSIONID=blaby-session");
+    assert.equal(
+      searchCall.referer,
+      "https://pa.blaby.gov.uk/online-applications/search.do?action=advanced"
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchIdoxApplications follows the live form action and redirected Referer while preserving session and CSRF", async () => {
+  const originalFetch = globalThis.fetch;
+  const redirectedSearchPage = "https://plans.nwleics.gov.uk/public-access/search.do?action=advanced&flow=redirected";
+  const dynamicResultsUrl = "https://plans.nwleics.gov.uk/public-access/customAdvancedResults.do?action=firstPage&flow=live-form";
+  const calls: Array<{
+    url: string;
+    method: string;
+    body: string;
+    cookie: string | null;
+    referer: string | null;
+    origin: string | null;
+  }> = [];
 
   globalThis.fetch = async (input, init = {}) => {
     const url = String(input);
     const method = String(init.method ?? "GET");
     const headers = new Headers(init.headers);
     const body = typeof init.body === "string" ? init.body : init.body instanceof URLSearchParams ? init.body.toString() : "";
-    calls.push({ url, method, body, cookie: headers.get("cookie") });
+    calls.push({
+      url,
+      method,
+      body,
+      cookie: headers.get("cookie"),
+      referer: headers.get("referer"),
+      origin: headers.get("origin")
+    });
 
     if (url.endsWith("search.do?action=advanced")) {
-      return new Response(`<html><form><input type="hidden" name="_csrf" value="csrf-abc-123" /></form></html>`, {
+      const response = new Response(
+        `<html><form data-method="get" data-action="ignoredResults.do" ` +
+        `method="post" action="customAdvancedResults.do?action=firstPage&amp;flow=live-form">` +
+        `<input type="hidden" name="_csrf" value="csrf-abc-123" />` +
+        `<input type="hidden" name="searchType" value="Application" />` +
+        `<input type="hidden" name="caseAddressType" value="Application" />` +
+        `</form></html>`,
+        {
         status: 200,
         headers: { "set-cookie": "JSESSIONID=session-123; Path=/public-access; HttpOnly" }
-      });
+        }
+      );
+      Object.defineProperty(response, "url", { value: redirectedSearchPage });
+      return response;
     }
 
-    if (url.endsWith("advancedSearchResults.do?action=firstPage")) {
+    if (url === dynamicResultsUrl) {
       return new Response(searchHtml, { status: 200 });
     }
 
@@ -475,13 +643,82 @@ test("fetchIdoxApplications opens a session, sends CSRF, searches by validated d
     assert.equal(applications.length, 1);
     assert.equal(applications[0].externalReference, "26/01057/FUL");
 
-    const searchCall = calls.find((call) => call.url.endsWith("advancedSearchResults.do?action=firstPage"));
+    const searchCall = calls.find((call) => call.url === dynamicResultsUrl);
     assert.ok(searchCall);
     assert.equal(searchCall.method, "POST");
     assert.match(searchCall.body, /_csrf=csrf-abc-123/);
     assert.match(searchCall.body, /date%28applicationValidatedStart%29=16%2F08%2F2026/);
     assert.match(searchCall.body, /date%28applicationValidatedEnd%29=23%2F08%2F2026/);
     assert.equal(searchCall.cookie, "JSESSIONID=session-123");
+    assert.equal(searchCall.referer, redirectedSearchPage);
+    assert.equal(searchCall.origin, null);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchIdoxApplications respects an empty same-page form action", async () => {
+  const originalFetch = globalThis.fetch;
+  const finalSearchPage = "https://plans.nwleics.gov.uk/public-access/redirectedAdvancedSearch.do?flow=current";
+  let requestNumber = 0;
+
+  globalThis.fetch = async (input, init = {}) => {
+    requestNumber++;
+    if (requestNumber === 1) {
+      const response = new Response(
+        `<form method="post" action=""><input name="_csrf" value="csrf-same-page"></form>`,
+        {
+          status: 200,
+          headers: { "set-cookie": "JSESSIONID=same-page-session; Path=/public-access; HttpOnly" }
+        }
+      );
+      Object.defineProperty(response, "url", { value: finalSearchPage });
+      return response;
+    }
+
+    assert.equal(String(input), finalSearchPage);
+    assert.equal(init.method, "POST");
+    assert.equal(new Headers(init.headers).get("referer"), finalSearchPage);
+    return new Response("<html><ul id=\"searchresults\"></ul></html>", { status: 200 });
+  };
+
+  try {
+    assert.deepEqual(
+      await fetchIdoxApplications(source, {
+        now: new Date("2026-08-23T12:00:00Z"),
+        lookbackDays: 7,
+        maxPages: 1
+      }),
+      []
+    );
+    assert.equal(requestNumber, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchIdoxApplications refuses a cross-origin form action before sending session data", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestNumber = 0;
+
+  globalThis.fetch = async () => {
+    requestNumber++;
+    return new Response(
+      `<form method="post" action="https://untrusted.example/search">` +
+      `<input name="_csrf" value="csrf-must-not-leave-origin"></form>`,
+      {
+        status: 200,
+        headers: { "set-cookie": "JSESSIONID=must-not-leave-origin; Path=/public-access; HttpOnly" }
+      }
+    );
+  };
+
+  try {
+    await assert.rejects(
+      fetchIdoxApplications(source),
+      /Idox advanced search form action is cross-origin/
+    );
+    assert.equal(requestNumber, 1);
   } finally {
     globalThis.fetch = originalFetch;
   }
