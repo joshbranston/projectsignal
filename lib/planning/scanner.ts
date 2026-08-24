@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { fetchCsvApplications } from "./adapters/csv.ts";
 import { fetchIdoxApplications } from "./adapters/idox.ts";
 import { fetchPlanItApplications } from "./adapters/planit.ts";
@@ -79,7 +80,12 @@ export async function runSourceBatch(
 
 function councilFromRow(row: any) {
   const value = row?.council;
-  return Array.isArray(value) ? value[0] : value;
+  const nested = Array.isArray(value) ? value[0] : value;
+  if (nested) return nested;
+  if (row?.council_id && row?.council_slug && row?.council_name) {
+    return { id: row.council_id, slug: row.council_slug, name: row.council_name };
+  }
+  return null;
 }
 
 export function planningSourceFromRow(row: any): PlanningSourceRecord {
@@ -103,7 +109,11 @@ export function planningSourceFromRow(row: any): PlanningSourceRecord {
     consecutiveFailures: Number(row.consecutive_failures ?? 0),
     lastScannedAt: row.last_scanned_at ?? null,
     lastSuccessAt: row.last_success_at ?? null,
-    nextScanAt: row.next_scan_at ?? null
+    nextScanAt: row.next_scan_at ?? null,
+    sourceRole: row.source_role === "fallback" ? "fallback" : "primary",
+    fallbackAfterFailures: Number(row.fallback_after_failures ?? 3),
+    leaseToken: row.lease_token ?? null,
+    leaseExpiresAt: row.lease_expires_at ?? null
   };
 }
 
@@ -163,17 +173,21 @@ function nextScanIso(source: PlanningSourceRecord, multiplier = 1) {
 
 async function markSourceSuccess(admin: any, source: PlanningSourceRecord) {
   const now = new Date().toISOString();
-  const { error } = await admin
+  let update = admin
     .from("planning_sources")
     .update({
       last_scanned_at: now,
       last_success_at: now,
       next_scan_at: nextScanIso(source),
       consecutive_failures: 0,
-      last_error: null
+      last_error: null,
+      lease_token: null,
+      lease_expires_at: null
     })
     .eq("id", source.id);
 
+  if (source.leaseToken) update = update.eq("lease_token", source.leaseToken);
+  const { error } = await update;
   if (error) throw error;
 
   // A degraded live authority can recover automatically after a successful feed run.
@@ -189,16 +203,20 @@ async function markSourceFailure(admin: any, source: PlanningSourceRecord, error
   const backoff = Math.min(6, 2 ** Math.min(failures - 1, 3));
   const now = new Date().toISOString();
 
-  const { error: updateError } = await admin
+  let update = admin
     .from("planning_sources")
     .update({
       last_scanned_at: now,
       next_scan_at: nextScanIso(source, backoff),
       consecutive_failures: failures,
-      last_error: error.message.slice(0, 1000)
+      last_error: error.message.slice(0, 1000),
+      lease_token: null,
+      lease_expires_at: null
     })
     .eq("id", source.id);
 
+  if (source.leaseToken) update = update.eq("lease_token", source.leaseToken);
+  const { error: updateError } = await update;
   if (updateError) throw updateError;
 
   await admin
@@ -212,17 +230,14 @@ async function markSourceFailure(admin: any, source: PlanningSourceRecord, error
 }
 
 export async function loadDuePlanningSources(admin: any, limit = 5) {
-  const now = new Date().toISOString();
-  const { data, error } = await admin
-    .from("planning_sources")
-    .select(
-      "id,slug,adapter,endpoint_url,format,config,priority,scan_every_minutes,consecutive_failures,last_scanned_at,last_success_at,next_scan_at,council:councils(id,slug,name,coverage_status)"
-    )
-    .eq("active", true)
-    .or(`next_scan_at.is.null,next_scan_at.lte.${now}`)
-    .order("priority", { ascending: true })
-    .order("next_scan_at", { ascending: true, nullsFirst: true })
-    .limit(Math.max(1, Math.min(limit, 20)));
+  const boundedLimit = Math.max(1, Math.min(Math.floor(limit), 20));
+  const workerToken = randomUUID();
+  const { data, error } = await admin.rpc("claim_due_planning_sources", {
+    p_limit: boundedLimit,
+    p_worker_token: workerToken,
+    p_lease_seconds: 90,
+    p_planit_limit: 1
+  });
 
   if (error) throw error;
   return (data ?? []).map(planningSourceFromRow);

@@ -63,6 +63,10 @@ export interface PlanningSourceRecord {
   lastScannedAt?: string | null;
   lastSuccessAt?: string | null;
   nextScanAt?: string | null;
+  sourceRole?: "primary" | "fallback";
+  fallbackAfterFailures?: number;
+  leaseToken?: string | null;
+  leaseExpiresAt?: string | null;
 }
 
 export type SavedPlanningApplication = {

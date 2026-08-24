@@ -60,7 +60,7 @@ test("normalisePlanItRecord falls back to uid when reference is blank", () => {
   assert.equal(application.agentName, "Example Architects Ltd");
 });
 
-test("fetchPlanItApplications requests the configured authority and follows result pages", async () => {
+test("fetchPlanItApplications caps automated PlanIt scans at one page per source run", async () => {
   const originalFetch = globalThis.fetch;
   const requested: URL[] = [];
 
@@ -97,8 +97,8 @@ test("fetchPlanItApplications requests the configured authority and follows resu
 
   try {
     const applications = await fetchPlanItApplications(source());
-    assert.equal(applications.length, 3);
-    assert.equal(requested.length, 2);
+    assert.equal(applications.length, 2);
+    assert.equal(requested.length, 1);
     assert.equal(requested[0].searchParams.get("auth"), "North West Leicestershire");
     assert.equal(requested[0].searchParams.get("recent"), "7");
     assert.equal(requested[0].searchParams.get("pg_sz"), "2");

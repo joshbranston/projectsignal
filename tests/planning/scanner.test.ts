@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fetchPlanningApplications, runSourceBatch } from "../../lib/planning/scanner.ts";
+import { fetchPlanningApplications, loadDuePlanningSources, planningSourceFromRow, runSourceBatch } from "../../lib/planning/scanner.ts";
 import type { PlanningSourceRecord } from "../../lib/planning/types.ts";
 
 function source(id: string): PlanningSourceRecord {
@@ -113,4 +113,71 @@ test("fetchPlanningApplications dispatches PlanIt custom sources to the PlanIt a
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+
+test("planningSourceFromRow parses flat claimed-source rows with lease metadata", () => {
+  const parsed = planningSourceFromRow({
+    id: "source-1",
+    council_id: "council-1",
+    council_slug: "example",
+    council_name: "Example Council",
+    slug: "fallback",
+    adapter: "custom",
+    endpoint_url: "https://www.planit.org.uk/api/applics/json",
+    format: "json",
+    config: { provider: "planit" },
+    priority: 200,
+    scan_every_minutes: 1440,
+    consecutive_failures: 0,
+    source_role: "fallback",
+    fallback_after_failures: 3,
+    lease_token: "11111111-1111-1111-1111-111111111111",
+    lease_expires_at: "2026-08-24T07:10:00.000Z"
+  });
+
+  assert.equal(parsed.councilSlug, "example");
+  assert.equal(parsed.sourceRole, "fallback");
+  assert.equal(parsed.fallbackAfterFailures, 3);
+  assert.equal(parsed.leaseToken, "11111111-1111-1111-1111-111111111111");
+});
+
+test("loadDuePlanningSources atomically claims a bounded batch through the service RPC", async () => {
+  const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const admin = {
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      calls.push({ name, args });
+      return {
+        data: [{
+          id: "source-1",
+          council_id: "council-1",
+          council_slug: "example",
+          council_name: "Example Council",
+          slug: "primary",
+          adapter: "csv",
+          endpoint_url: "https://example.test/feed.csv",
+          format: "csv",
+          config: {},
+          priority: 100,
+          scan_every_minutes: 1440,
+          consecutive_failures: 0,
+          source_role: "primary",
+          fallback_after_failures: 3,
+          lease_token: args.p_worker_token,
+          lease_expires_at: "2026-08-24T07:10:00.000Z"
+        }],
+        error: null
+      };
+    }
+  };
+
+  const sources = await loadDuePlanningSources(admin, 7);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "claim_due_planning_sources");
+  assert.equal(calls[0].args.p_limit, 7);
+  assert.equal(calls[0].args.p_planit_limit, 1);
+  assert.equal(calls[0].args.p_lease_seconds, 90);
+  assert.match(String(calls[0].args.p_worker_token), /^[0-9a-f-]{36}$/i);
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].leaseToken, calls[0].args.p_worker_token);
 });

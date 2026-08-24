@@ -92,7 +92,9 @@ function planItUrl(source: PlanningSourceRecord, page: number) {
 export async function fetchPlanItApplications(
   source: PlanningSourceRecord
 ): Promise<NormalisedPlanningApplication[]> {
-  const maxPages = Math.max(1, Math.min(Number(source.config.maxPages ?? 3), 10));
+  // PlanIt asks automated consumers to leave at least 60 seconds between API requests.
+  // ProjectSignal therefore performs one PlanIt request per scheduled source run.
+  const maxPages = 1;
   const pageSize = Math.max(1, Math.min(Number(source.config.pageSize ?? 100), 300));
   const headers = {
     "user-agent": "ProjectSignal/0.3 (+https://projectsignal-tau.vercel.app)",
