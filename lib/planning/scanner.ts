@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fetchCsvApplications } from "./adapters/csv.ts";
 import { fetchIdoxApplications } from "./adapters/idox.ts";
+import { fetchMasterGovApplications } from "./adapters/mastergov.ts";
 import { fetchPlanItApplications } from "./adapters/planit.ts";
 import { ingestApplications } from "./ingest.ts";
 import { matchCountyLeads } from "./matching.ts";
@@ -125,6 +126,7 @@ export async function fetchPlanningApplications(source: PlanningSourceRecord) {
       return fetchIdoxApplications(source);
     case "custom":
       if (source.config.provider === "planit") return fetchPlanItApplications(source);
+      if (source.config.provider === "mastergov") return fetchMasterGovApplications(source);
       throw new Error(`Unsupported custom planning source provider: ${source.config.provider ?? "unknown"}`);
     default:
       throw new Error(`Unsupported planning source adapter: ${source.adapter}`);

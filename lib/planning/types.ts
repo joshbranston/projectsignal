@@ -41,6 +41,7 @@ export type PlanningSourceConfig = {
   requestHeaders?: Record<string, string>;
   lookbackDays?: number;
   maxPages?: number;
+  enrichDetails?: boolean;
   searchDateField?: "validated" | "received";
   provider?: string;
   authority?: string;

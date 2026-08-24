@@ -115,6 +115,46 @@ test("fetchPlanningApplications dispatches PlanIt custom sources to the PlanIt a
   }
 });
 
+test("fetchPlanningApplications dispatches MasterGov custom sources to the MasterGov adapter", async () => {
+  const originalFetch = globalThis.fetch;
+  const masterGovSource: PlanningSourceRecord = {
+    ...source("leicester"),
+    adapter: "custom",
+    endpointUrl: "https://planning.example.test/",
+    format: "html",
+    config: { provider: "mastergov", lookbackDays: 7, maxPages: 1 }
+  };
+
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/Search/Standard?")) {
+      return new Response(`<div>1 result found</div><table><tr>
+        <th>Application Number</th><th>Location</th><th>Description</th><th>Date Validated</th><th>Status Decision</th>
+      </tr><tr>
+        <td><a href="/Planning/Display/20261245">20261245</a></td><td>Leicester LE1 1AA</td>
+        <td>Rear extension</td><td>20/08/2026</td><td>Pending decision</td>
+      </tr></table>`);
+    }
+    if (url.endsWith("/Planning/Display/20261245")) {
+      return new Response(`<table>
+        <tr><th>Application Number</th><td>20261245</td></tr>
+        <tr><th>Description</th><td>Rear extension</td></tr>
+        <tr><th>Application Type</th><td>Full application</td></tr>
+      </table>`);
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const applications = await fetchPlanningApplications(masterGovSource);
+    assert.equal(applications.length, 1);
+    assert.equal(applications[0].externalReference, "20261245");
+    assert.equal(applications[0].applicationType, "Full application");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 test("planningSourceFromRow parses flat claimed-source rows with lease metadata", () => {
   const parsed = planningSourceFromRow({
