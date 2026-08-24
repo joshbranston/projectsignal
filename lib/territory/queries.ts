@@ -1,4 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
+import { summariseCountyCoverage } from "@/lib/territory/coverage";
 
 export type CountyOption = {
   id: string;
@@ -7,6 +8,11 @@ export type CountyOption = {
   nation: string;
   coverageStatus: "live" | "partial" | "coming_soon" | "degraded";
   coveragePercent: number;
+  totalAuthorities: number;
+  liveAuthorities: number;
+  testingAuthorities: number;
+  degradedAuthorities: number;
+  lastSuccessfulRefresh: string | null;
 };
 
 export async function getEnglandCountyOptions(): Promise<CountyOption[]> {
@@ -22,43 +28,40 @@ export async function getEnglandCountyOptions(): Promise<CountyOption[]> {
         .order("name"),
       admin
         .from("planning_authority_counties")
-        .select("county_id,council:councils(coverage_status)")
+        .select("county_id,council:councils(active,coverage_status,last_success_at)")
     ]);
 
   if (countyError) throw countyError;
   if (mappingError) throw mappingError;
 
-  const statusesByCounty = new Map<string, string[]>();
+  const authoritiesByCounty = new Map<
+    string,
+    Array<{ active: boolean; coverageStatus: string; lastSuccessAt: string | null }>
+  >();
 
   for (const mapping of mappings ?? []) {
     const councilValue = (mapping as any).council;
     const council = Array.isArray(councilValue) ? councilValue[0] : councilValue;
-    const status = council?.coverage_status;
     const countyId = (mapping as any).county_id as string;
 
-    if (!statusesByCounty.has(countyId)) statusesByCounty.set(countyId, []);
-    if (status) statusesByCounty.get(countyId)!.push(String(status));
+    if (!council) continue;
+    if (!authoritiesByCounty.has(countyId)) authoritiesByCounty.set(countyId, []);
+    authoritiesByCounty.get(countyId)!.push({
+      active: Boolean(council.active),
+      coverageStatus: String(council.coverage_status ?? "discovery"),
+      lastSuccessAt: council.last_success_at ? String(council.last_success_at) : null
+    });
   }
 
   return (counties ?? []).map((county: any) => {
-    const statuses = statusesByCounty.get(county.id) ?? [];
-    const live = statuses.filter((status) => status === "live").length;
-    const degraded = statuses.filter((status) => status === "degraded").length;
-    const total = statuses.length;
-
-    let coverageStatus: CountyOption["coverageStatus"] = "coming_soon";
-    if (total > 0 && live === total) coverageStatus = "live";
-    else if (live > 0 && degraded > 0) coverageStatus = "degraded";
-    else if (live > 0) coverageStatus = "partial";
-    else if (degraded > 0) coverageStatus = "degraded";
+    const summary = summariseCountyCoverage(authoritiesByCounty.get(county.id) ?? []);
 
     return {
       id: county.id,
       slug: county.slug,
       name: county.name,
       nation: county.nation,
-      coverageStatus,
-      coveragePercent: total > 0 ? Math.round((live / total) * 100) : 0
+      ...summary
     };
   });
 }
