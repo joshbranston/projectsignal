@@ -155,6 +155,55 @@ test("fetchPlanningApplications dispatches MasterGov custom sources to the Maste
   }
 });
 
+test("fetchPlanningApplications dispatches ASSURE custom sources to the ASSURE adapter", async () => {
+  const originalFetch = globalThis.fetch;
+  const assureSource: PlanningSourceRecord = {
+    ...source("charnwood"),
+    adapter: "custom",
+    endpointUrl: "https://planning.example.test/Assure/OnlinePlanningSearch",
+    format: "html",
+    config: { provider: "assure", lookbackDays: 7, maxPages: 1, enrichDetails: false }
+  };
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url.endsWith("/Assure/OnlinePlanningSearch")) {
+      return new Response(`<form id="frmOnlinePlanningSearch">
+        <input type="radio" name="SearchFor" value="PlanningApplications">
+        <input type="hidden" name="urlOnlinePlanningWeeklyMonthlySearchView" value="/Assure/WeeklyView">
+        <input type="hidden" name="urlOnlinePlanningWeeklyMonthlyGoSearch" value="/Assure/WeeklyResults">
+        <input type="hidden" name="IsWeeklyListSearch" value="false">
+        <input type="hidden" name="IsMonthlyListSearch" value="true">
+        <div id="divOnlinePlanningSearchView"></div>
+      </form>`);
+    }
+    if (url.includes("/Assure/WeeklyView")) {
+      return new Response(`<select name="SelectedWeek"><option value="0" selected>Dates</option></select>
+        <input name="WeeklyFromDate"><input name="WeeklyToDate">
+        <input type="radio" name="WeeklyListStatus" value="ValidatedThisWeek">
+        <div id="divWeeklyMonthlySearchResultsForSorting"></div>`);
+    }
+    if (url.endsWith("/Assure/WeeklyResults") && String(init.method).toUpperCase() === "POST") {
+      return new Response(`<div id="divSearchList"><p>1 Result</p><article class="assure-search-result">
+        <dl class="govuk-summary-list">
+          <div class="govuk-summary-list__row"><dt>Application Reference</dt><dd>P/26/1521/2</dd></div>
+          <div class="govuk-summary-list__row"><dt>Address</dt><dd>81 The Green, Mountsorrel LE12 7AE</dd></div>
+          <div class="govuk-summary-list__row"><dt>Description</dt><dd>Rear conservatory</dd></div>
+        </dl><a data-redirect-url="/Assure/OnlinePlanningOverview?applicationNumber=P%2F26%2F1521%2F2">View</a>
+      </article></div>`);
+    }
+    throw new Error(`Unexpected request ${String(init.method ?? "GET")} ${url}`);
+  };
+
+  try {
+    const applications = await fetchPlanningApplications(assureSource);
+    assert.equal(applications.length, 1);
+    assert.equal(applications[0].externalReference, "P/26/1521/2");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 
 test("planningSourceFromRow parses flat claimed-source rows with lease metadata", () => {
   const parsed = planningSourceFromRow({
