@@ -113,6 +113,60 @@ function pagedResultsFixture(reference: string, currentIndex: number, pageIndexe
   </div>`;
 }
 
+function searchFixtureWithGenericResultsUrl(
+  value = "/Assure/ES/Presentation/Planning/OnlinePlanning/OnlinePlanningSearchResults"
+) {
+  return assureSearchFixture.replace(
+    '<form id="frmOnlinePlanningSearch">',
+    `<form id="frmOnlinePlanningSearch">
+      <input type="hidden" name="urlOnlinePlanningSearchResult" value="${value}">`
+  );
+}
+
+function legacyPagedResultsFixture(
+  references: string[],
+  totalRecords: number,
+  currentPageIndex = ""
+) {
+  const pageCount = Math.ceil(totalRecords / 2);
+  return `<div id="divSearchList"><span>Total record(s): ${totalRecords}</span>
+    ${references.map((reference) => `<article class="assure-search-result"><dl>
+      <div><dt>Application Reference</dt><dd>${reference}</dd></div>
+      <div><dt>Address</dt><dd>${reference} Example Road, LE12 7AE</dd></div>
+      <div><dt>Description</dt><dd>Works for ${reference}</dd></div>
+      <div><dt>Date Registered</dt><dd>20/08/2026</dd></div>
+    </dl><a data-redirect-url="/Assure/ES/Presentation/Planning/OnlinePlanning/OnlinePlanningOverview?applicationNumber=${encodeURIComponent(reference)}">View</a></article>`).join("")}
+    <ul class="pagination pagination-lg pager tablePagingRow">
+      ${Array.from({ length: pageCount }, (_, index) =>
+        `<li><a href="#" onclick="$('#CurrentPageIndex').val(${index}); PagingClick('${index}');">${index + 1}</a></li>`
+      ).join("")}
+    </ul>
+    <input type="hidden" id="CurrentPageIndex" name="CurrentPageIndex" value="${currentPageIndex}">
+    <input type="hidden" name="PageCount" value="${pageCount}">
+    <input type="hidden" name="PageSize" value="2">
+    <input type="hidden" name="TotalRecords" value="${totalRecords}">
+    <select id="PagingParameters_PageSize" name="PagingParameters.PageSize">
+      <option value="2" selected>2</option>
+    </select>
+  </div>`;
+}
+
+function canonicalBridgeResultsFixture(
+  references: string[],
+  totalRecords: number,
+  currentPageIndex: number
+) {
+  return `${legacyPagedResultsFixture(references, totalRecords, String(currentPageIndex))}
+    <div id="generalSearchPagination"
+      data-url="/Assure/ES/Presentation/Planning/OnlinePlanning/SearchResultsForPagination"></div>
+    <input type="hidden" id="PagingParameters_CurrentPageIndex"
+      name="PagingParameters.CurrentPageIndex" value="${currentPageIndex}">
+    <input type="hidden" id="PagingParameters_PageSize"
+      name="PagingParameters.PageSize" value="2">
+    <input type="hidden" id="PagingParameters_TotalRecords"
+      name="PagingParameters.TotalRecords" value="${totalRecords}">`;
+}
+
 function multipleResultsFixture(references: string[]) {
   return `<div id="divSearchList"><p>${references.length} Results</p>${references.map((reference) => `
     <article class="assure-search-result"><dl class="govuk-summary-list">
@@ -370,6 +424,337 @@ test("fetchAssureApplications follows dynamic POST pagination and respects the p
       "P/26/1522/2"
     ]);
     assert.deepEqual(pagedIndexes, ["1"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications bridges legacy weekly state into canonical pagination", async () => {
+  const originalFetch = globalThis.fetch;
+  const operations: string[] = [];
+
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    const headers = new Headers(init.headers);
+    if (url === CHARNWOOD_SEARCH_URL) {
+      operations.push("initial");
+      return responseAt(url, searchFixtureWithGenericResultsUrl(), {
+        headers: { "set-cookie": "ASP.NET_SessionId=legacy-session; Path=/; HttpOnly" }
+      });
+    }
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) {
+      operations.push("weekly-view");
+      return responseAt(url, assureWeeklyFixture);
+    }
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      operations.push("weekly-search");
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      operations.push("bridge");
+      assert.match(headers.get("cookie") ?? "", /ASP\.NET_SessionId=legacy-session/);
+      const body = new URLSearchParams(String(init.body));
+      assert.deepEqual(body.getAll("Repeated"), ["first", "second"]);
+      assert.equal(body.get("PageCount"), "2");
+      assert.equal(body.get("PageSize"), "2");
+      assert.equal(body.get("TotalRecords"), "3");
+      assert.equal(body.has("IsPaginationClicked"), false);
+      return responseAt(
+        url,
+        canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3, 0)
+      );
+    }
+    if (url.endsWith("/SearchResultsForPagination")) {
+      operations.push("page-2");
+      assert.match(headers.get("cookie") ?? "", /ASP\.NET_SessionId=legacy-session/);
+      const body = new URLSearchParams(String(init.body));
+      assert.equal(body.get("PagingParameters.CurrentPageIndex"), "1");
+      assert.deepEqual(body.getAll("PagingParameters.PageSize"), ["2", "2"]);
+      assert.equal(body.get("PagingParameters.TotalRecords"), "3");
+      assert.equal(body.has("IsPaginationClicked"), false);
+      return responseAt(url, canonicalBridgeResultsFixture(["P/26/1523/2"], 3, 1));
+    }
+    throw new Error(`Unexpected request ${String(init.method ?? "GET")} ${url}`);
+  };
+
+  try {
+    const applications = await fetchAssureApplications(charnwoodSource, {
+      now: new Date("2026-08-24T12:00:00.000Z"),
+      maxPages: 10
+    });
+    assert.deepEqual(operations, ["initial", "weekly-view", "weekly-search", "bridge", "page-2"]);
+    assert.deepEqual(applications.map((application) => application.externalReference), [
+      "P/26/1521/2",
+      "P/26/1522/2",
+      "P/26/1523/2"
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications fails closed when fully traversed pages miss the advertised total", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === CHARNWOOD_SEARCH_URL) {
+      return responseAt(url, searchFixtureWithGenericResultsUrl());
+    }
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) {
+      return responseAt(url, assureWeeklyFixture);
+    }
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      return responseAt(
+        url,
+        canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3, 0)
+      );
+    }
+    if (url.endsWith("/SearchResultsForPagination")) {
+      return responseAt(url, canonicalBridgeResultsFixture(["P/26/1522/2"], 3, 1));
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    await assert.rejects(
+      fetchAssureApplications(charnwoodSource, {
+        now: new Date("2026-08-24T12:00:00.000Z"),
+        maxPages: 10
+      }),
+      /reported 3 results but fully traversed pagination yielded 2 unique applications/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications requires a same-origin legacy bridge route", async () => {
+  const originalFetch = globalThis.fetch;
+  for (const [label, searchHtml] of [
+    ["missing", assureSearchFixture],
+    ["cross-origin", searchFixtureWithGenericResultsUrl("https://attacker.example/pagination")]
+  ] as const) {
+    let requests = 0;
+    globalThis.fetch = async (input) => {
+      requests += 1;
+      const url = String(input);
+      if (url === CHARNWOOD_SEARCH_URL) return responseAt(url, searchHtml);
+      if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+      if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+        return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+      }
+      throw new Error(`Unexpected ${label} bridge request ${url}`);
+    };
+    await assert.rejects(
+      fetchAssureApplications(charnwoodSource, {
+        now: new Date("2026-08-24T12:00:00.000Z")
+      }),
+      /legacy pagination bridge URL is missing or cross-origin/
+    );
+    assert.equal(requests, 3);
+  }
+  globalThis.fetch = originalFetch;
+});
+
+test("fetchAssureApplications fails closed when the bridge omits canonical pagination state", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === CHARNWOOD_SEARCH_URL) return responseAt(url, searchFixtureWithGenericResultsUrl());
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      return responseAt(
+        url,
+        canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3, 0)
+          .replace("data-url=\"/Assure/ES/Presentation/Planning/OnlinePlanning/SearchResultsForPagination\"", "")
+      );
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    await assert.rejects(
+      fetchAssureApplications(charnwoodSource, {
+        now: new Date("2026-08-24T12:00:00.000Z")
+      }),
+      /legacy pagination bridge returned inconsistent canonical state/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications redacts bridge HTTP and nested transport failures", async () => {
+  const originalFetch = globalThis.fetch;
+  for (const failureKind of ["http", "transport"] as const) {
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      if (url === CHARNWOOD_SEARCH_URL) {
+        return responseAt(url, searchFixtureWithGenericResultsUrl(), {
+          headers: { "set-cookie": "ASP.NET_SessionId=legacy-session; Path=/; HttpOnly" }
+        });
+      }
+      if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+      if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+        return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+      }
+      if (url.endsWith("/OnlinePlanningSearchResults")) {
+        if (failureKind === "http") {
+          return responseAt(url, "<title>Rejected hidden-secret legacy-session</title>", {
+            status: 403,
+            headers: {
+              "content-type": "text/html; charset=utf-8",
+              "set-cookie": "BridgeSession=bridge-secret; Path=/; HttpOnly"
+            }
+          });
+        }
+        const nested = Object.assign(new Error("socket hidden-secret legacy-session"), {
+          code: "ECONNRESET"
+        });
+        throw Object.assign(new TypeError("fetch failed"), { cause: nested });
+      }
+      throw new Error(`Unexpected request ${url}`);
+    };
+
+    const failure = await fetchAssureApplications(charnwoodSource, {
+      now: new Date("2026-08-24T12:00:00.000Z")
+    }).then(
+      () => "resolved",
+      (error) => error instanceof Error ? error.message : String(error)
+    );
+    assert.match(failure, /canonicalize-pagination/);
+    assert.match(failure, failureKind === "http" ? /status=403/ : /ECONNRESET/);
+    assert.doesNotMatch(failure, /hidden-secret|legacy-session|bridge-secret/);
+  }
+  globalThis.fetch = originalFetch;
+});
+
+test("fetchAssureApplications redacts hidden state introduced by the canonical bridge", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url === CHARNWOOD_SEARCH_URL) return responseAt(url, searchFixtureWithGenericResultsUrl());
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      return responseAt(
+        url,
+        `${canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 3, 0)}
+          <input type="hidden" name="CanonicalToken" value="canonical-secret">`
+      );
+    }
+    if (url.endsWith("/SearchResultsForPagination")) {
+      return responseAt(url, "<title>Rejected canonical-secret</title>", {
+        status: 403,
+        headers: { "content-type": "text/html; charset=utf-8" }
+      });
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const failure = await fetchAssureApplications(charnwoodSource, {
+      now: new Date("2026-08-24T12:00:00.000Z")
+    }).then(
+      () => "resolved",
+      (error) => error instanceof Error ? error.message : String(error)
+    );
+    assert.match(failure, /load-results-page/);
+    assert.match(failure, /status=403/);
+    assert.doesNotMatch(failure, /canonical-secret/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications reserializes canonical state across multiple legacy pages", async () => {
+  const originalFetch = globalThis.fetch;
+  const submittedIndexes: string[] = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === CHARNWOOD_SEARCH_URL) return responseAt(url, searchFixtureWithGenericResultsUrl());
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 5));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      return responseAt(
+        url,
+        canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 5, 0)
+      );
+    }
+    if (url.endsWith("/SearchResultsForPagination")) {
+      const index = new URLSearchParams(String(init.body)).get("PagingParameters.CurrentPageIndex");
+      assert.ok(index);
+      submittedIndexes.push(index);
+      return responseAt(
+        url,
+        index === "1"
+          ? canonicalBridgeResultsFixture(["P/26/1523/2", "P/26/1524/2"], 5, 1)
+          : canonicalBridgeResultsFixture(["P/26/1524/2", "P/26/1525/2"], 5, 2)
+      );
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const applications = await fetchAssureApplications(charnwoodSource, {
+      now: new Date("2026-08-24T12:00:00.000Z"),
+      maxPages: 10
+    });
+    assert.deepEqual(submittedIndexes, ["1", "2"]);
+    assert.deepEqual(applications.map((application) => application.externalReference), [
+      "P/26/1521/2",
+      "P/26/1522/2",
+      "P/26/1523/2",
+      "P/26/1524/2",
+      "P/26/1525/2"
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchAssureApplications returns a bounded partial set when maxPages prevents completion", async () => {
+  const originalFetch = globalThis.fetch;
+  const submittedIndexes: string[] = [];
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input);
+    if (url === CHARNWOOD_SEARCH_URL) return responseAt(url, searchFixtureWithGenericResultsUrl());
+    if (url.includes("OnlinePlanningWeeklyMonthlyView")) return responseAt(url, assureWeeklyFixture);
+    if (url.includes("OnlinePlanningSearchResultsForWeeklyMonthlyGo")) {
+      return responseAt(url, legacyPagedResultsFixture(["P/26/1521/2", "P/26/1522/2"], 5));
+    }
+    if (url.endsWith("/OnlinePlanningSearchResults")) {
+      return responseAt(
+        url,
+        canonicalBridgeResultsFixture(["P/26/1521/2", "P/26/1522/2"], 5, 0)
+      );
+    }
+    if (url.endsWith("/SearchResultsForPagination")) {
+      const index = new URLSearchParams(String(init.body)).get("PagingParameters.CurrentPageIndex");
+      assert.ok(index);
+      submittedIndexes.push(index);
+      return responseAt(url, canonicalBridgeResultsFixture(["P/26/1523/2", "P/26/1524/2"], 5, 1));
+    }
+    throw new Error(`Unexpected request ${url}`);
+  };
+
+  try {
+    const applications = await fetchAssureApplications(charnwoodSource, {
+      now: new Date("2026-08-24T12:00:00.000Z"),
+      maxPages: 2
+    });
+    assert.deepEqual(submittedIndexes, ["1"]);
+    assert.equal(applications.length, 4);
   } finally {
     globalThis.fetch = originalFetch;
   }

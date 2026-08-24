@@ -407,19 +407,110 @@ function weeklyViewUrl(searchHtml: string, pageUrl: string) {
   return url.toString();
 }
 
-function buildPaginationBody(formHtml: string, resultsHtml: string, pageIndex: string) {
+function formWithResultsState(formHtml: string, resultsHtml: string) {
   const $ = load(formHtml);
   const form = $("#frmOnlinePlanningSearch").first();
   if (!form.length) throw new Error("ASSURE pagination state did not provide its search form");
   const results = form.find("#divWeeklyMonthlySearchResultsForSorting, #divOnlinePlanningSearchResults").first();
   if (!results.length) throw new Error("ASSURE pagination state did not provide its results container");
   results.html(resultsHtml);
+  return { $, form };
+}
+
+function buildPaginationBridgeBody(formHtml: string, resultsHtml: string) {
+  const { $, form } = formWithResultsState(formHtml, resultsHtml);
+  return serializeSuccessfulControls($, form);
+}
+
+function hiddenControlValues(html: string) {
+  const $ = load(html);
+  return $("input[type='hidden']")
+    .map((_, element) => $(element).attr("value") ?? "")
+    .get()
+    .filter(Boolean);
+}
+
+function buildPaginationBody(formHtml: string, resultsHtml: string, pageIndex: string) {
+  const { $, form } = formWithResultsState(formHtml, resultsHtml);
   const pageName = form.find("[name='PagingParameters.CurrentPageIndex']").length
     ? "PagingParameters.CurrentPageIndex"
     : "PagingParameters_CurrentPageIndex";
   setNamedControl($, form, pageName, pageIndex);
-  setNamedControl($, form, "IsPaginationClicked", "true");
+  if (form.find("[name='IsPaginationClicked']").length) {
+    setNamedControl($, form, "IsPaginationClicked", "true");
+  }
   return serializeSuccessfulControls($, form);
+}
+
+function numericControlValue($: CheerioAPI, selector: string) {
+  const control = $(selector).first();
+  if (!control.length) return null;
+  const value = control.is("select")
+    ? control.find("option[selected]").first().attr("value") ?? control.find("option").first().attr("value")
+    : control.attr("value");
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric >= 0 ? numeric : null;
+}
+
+function legacyPaginationEvidence(html: string, advertisedTotal: number) {
+  const $ = load(html);
+  const pageCount = numericControlValue($, "[name='PageCount']");
+  const pageSize = numericControlValue($, "[name='PageSize']");
+  const totalRecords = numericControlValue($, "[name='TotalRecords']");
+  const indexes = new Set<string>();
+  $("[onclick*='PagingClick']").each((_, element) => {
+    const index = $(element).attr("onclick")?.match(/PagingClick\(\s*['\"]?(\d+)/i)?.[1];
+    if (index !== undefined) indexes.add(index);
+  });
+  return (
+    $("[name='CurrentPageIndex']").length > 0 &&
+    pageCount !== null && pageCount > 1 &&
+    pageSize !== null && pageSize > 0 &&
+    totalRecords === advertisedTotal &&
+    indexes.size > 1
+  );
+}
+
+function paginationBridgeUrl(formHtml: string, pageUrl: string) {
+  const $ = load(formHtml);
+  return requiredSameOriginUrl(
+    $("#frmOnlinePlanningSearch [name='urlOnlinePlanningSearchResult']").first().attr("value"),
+    pageUrl,
+    "legacy pagination bridge URL"
+  );
+}
+
+function canonicalPaginationStateIsValid(html: string, expectedTotal: number) {
+  const $ = load(html);
+  const currentPage = $(
+    "[name='PagingParameters.CurrentPageIndex'], [name='PagingParameters_CurrentPageIndex']"
+  ).first();
+  const pageSize = numericControlValue(
+    $,
+    "input[name='PagingParameters.PageSize'], input[name='PagingParameters_PageSize'], select[name='PagingParameters.PageSize'], select[name='PagingParameters_PageSize']"
+  );
+  const totalRecords = numericControlValue(
+    $,
+    "[name='PagingParameters.TotalRecords'], [name='PagingParameters_TotalRecords']"
+  );
+  return currentPage.length > 0 && pageSize !== null && pageSize > 0 && totalRecords === expectedTotal;
+}
+
+function advertisedPaginationBounds(html: string, expectedTotal: number | null) {
+  if (expectedTotal === null) return null;
+  const $ = load(html);
+  const pageSize =
+    numericControlValue(
+      $,
+      "input[name='PagingParameters.PageSize'], input[name='PagingParameters_PageSize'], select[name='PagingParameters.PageSize'], select[name='PagingParameters_PageSize']"
+    ) ?? numericControlValue($, "[name='PageSize']");
+  const totalRecords =
+    numericControlValue(
+      $,
+      "[name='PagingParameters.TotalRecords'], [name='PagingParameters_TotalRecords']"
+    ) ?? numericControlValue($, "[name='TotalRecords']");
+  if (pageSize === null || pageSize <= 0 || totalRecords !== expectedTotal) return null;
+  return { totalRecords, totalPages: Math.ceil(totalRecords / pageSize) };
 }
 
 export type AssureFetchOptions = {
@@ -649,7 +740,7 @@ export async function fetchAssureApplications(
     submittedSearch.response,
     prepared.sensitiveValues
   );
-  const parsed = parseAssureSearchResultsHtml(resultsHtml, submittedSearch.url);
+  let parsed = parseAssureSearchResultsHtml(resultsHtml, submittedSearch.url);
   if (!parsed.recognized) {
     throw new Error(`${source.councilName} ASSURE search response was not recognizable`);
   }
@@ -657,6 +748,57 @@ export async function fetchAssureApplications(
     throw new Error(
       `${source.councilName} ASSURE search response reported ${parsed.resultCount} results but yielded no parseable applications`
     );
+  }
+  const advertisedPagination = advertisedPaginationBounds(resultsHtml, parsed.resultCount);
+  let paginationStateHtml = resultsHtml;
+  if (
+    parsed.resultCount !== null &&
+    parsed.resultCount > parsed.applications.length &&
+    !parsed.paginationUrl &&
+    legacyPaginationEvidence(resultsHtml, parsed.resultCount)
+  ) {
+    const bridgeUrl = paginationBridgeUrl(prepared.formHtml, searchPageUrl);
+    const bridgeInit = {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded; charset=UTF-8",
+        origin: portalOrigin,
+        referer: searchPageUrl,
+        "x-requested-with": "XMLHttpRequest"
+      },
+      body: buildPaginationBridgeBody(prepared.formHtml, resultsHtml),
+      cache: "no-store"
+    } satisfies RequestInit;
+    const bridgeResponse = await request("canonicalize-pagination", bridgeUrl, bridgeInit);
+    const loadedBridge = await followRedirects(
+      "canonicalize-pagination",
+      bridgeUrl,
+      bridgeResponse,
+      bridgeInit
+    );
+    if (!loadedBridge.response.ok) {
+      throw await assureHttpRejectionError(
+        source,
+        "canonicalize-pagination",
+        loadedBridge.url,
+        loadedBridge.response,
+        sensitiveValues()
+      );
+    }
+    const canonicalHtml = await readText("read-canonical-pagination", loadedBridge.response);
+    persistentSecrets.push(...hiddenControlValues(canonicalHtml));
+    const canonical = parseAssureSearchResultsHtml(canonicalHtml, loadedBridge.url);
+    if (
+      !canonical.recognized ||
+      canonical.resultCount !== parsed.resultCount ||
+      canonical.applications.length !== parsed.applications.length ||
+      !canonical.paginationUrl ||
+      !canonicalPaginationStateIsValid(canonicalHtml, parsed.resultCount)
+    ) {
+      throw new Error(`${source.councilName} ASSURE legacy pagination bridge returned inconsistent canonical state`);
+    }
+    parsed = canonical;
+    paginationStateHtml = canonicalHtml;
   }
   if (
     parsed.resultCount !== null &&
@@ -673,7 +815,6 @@ export async function fetchAssureApplications(
   const seenPageIndexes = new Set<string>([parsed.currentPageIndex ?? "0"]);
   const queuedPageIndexes = parsed.pageIndexes.filter((index) => !seenPageIndexes.has(index));
   let paginationUrl = parsed.paginationUrl;
-  let paginationStateHtml = resultsHtml;
   let pagesLoaded = 1;
 
   while (paginationUrl && queuedPageIndexes.length && pagesLoaded < maxPages) {
@@ -708,6 +849,7 @@ export async function fetchAssureApplications(
       );
     }
     const pageHtml = await readText("read-results-page", loadedPage.response);
+    persistentSecrets.push(...hiddenControlValues(pageHtml));
     const page = parseAssureSearchResultsHtml(pageHtml, loadedPage.url);
     if (!page.recognized) throw new Error(`${source.councilName} ASSURE results page was not recognizable`);
     if ((page.resultCount ?? 0) > 0 && page.applications.length === 0) {
@@ -726,6 +868,17 @@ export async function fetchAssureApplications(
     paginationUrl = page.paginationUrl ?? paginationUrl;
     paginationStateHtml = pageHtml;
     pagesLoaded += 1;
+  }
+
+  if (
+    advertisedPagination &&
+    advertisedPagination.totalPages <= maxPages &&
+    byReference.size !== advertisedPagination.totalRecords
+  ) {
+    throw new Error(
+      `${source.councilName} ASSURE search response reported ${advertisedPagination.totalRecords} results but ` +
+        `fully traversed pagination yielded ${byReference.size} unique applications`
+    );
   }
 
   const rows = [...byReference.values()];
@@ -950,7 +1103,7 @@ export function parseAssureSearchResultsHtml(
   const pagination = $("#generalSearchPagination").first();
   const paginationUrl = sameOriginUrl(pagination.attr("data-url"), baseUrl);
   const pageIndexes: string[] = [];
-  pagination.find("[onclick*='PagingClick']").each((_, element) => {
+  $("[onclick*='PagingClick']").each((_, element) => {
     const index = $(element).attr("onclick")?.match(/PagingClick\(\s*['\"]?(\d+)/i)?.[1];
     if (index !== undefined && !pageIndexes.includes(index)) pageIndexes.push(index);
   });
@@ -965,8 +1118,7 @@ export function parseAssureSearchResultsHtml(
     paginationUrl,
     pageIndexes,
     currentPageIndex: nullable(
-      pagination
-        .find("[name='PagingParameters.CurrentPageIndex'], [name='PagingParameters_CurrentPageIndex']")
+      $("[name='PagingParameters.CurrentPageIndex'], [name='PagingParameters_CurrentPageIndex']")
         .first()
         .attr("value")
     )
