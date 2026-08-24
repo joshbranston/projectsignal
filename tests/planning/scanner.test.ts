@@ -157,6 +157,7 @@ test("fetchPlanningApplications dispatches MasterGov custom sources to the Maste
 
 test("fetchPlanningApplications dispatches ASSURE custom sources to the ASSURE adapter", async () => {
   const originalFetch = globalThis.fetch;
+  const submittedSearches: URLSearchParams[] = [];
   const assureSource: PlanningSourceRecord = {
     ...source("charnwood"),
     adapter: "custom",
@@ -184,6 +185,7 @@ test("fetchPlanningApplications dispatches ASSURE custom sources to the ASSURE a
         <div id="divWeeklyMonthlySearchResultsForSorting"></div>`);
     }
     if (url.endsWith("/Assure/WeeklyResults") && String(init.method).toUpperCase() === "POST") {
+      submittedSearches.push(new URLSearchParams(String(init.body)));
       return new Response(`<div id="divSearchList"><p>1 Result</p><article class="assure-search-result">
         <dl class="govuk-summary-list">
           <div class="govuk-summary-list__row"><dt>Application Reference</dt><dd>P/26/1521/2</dd></div>
@@ -196,9 +198,16 @@ test("fetchPlanningApplications dispatches ASSURE custom sources to the ASSURE a
   };
 
   try {
-    const applications = await fetchPlanningApplications(assureSource);
+    const applications = await fetchPlanningApplications(assureSource, {
+      now: new Date("2030-01-10T12:00:00.000Z"),
+      lookbackDays: 3,
+      maxPages: 1,
+      enrichDetails: false
+    });
     assert.equal(applications.length, 1);
     assert.equal(applications[0].externalReference, "P/26/1521/2");
+    assert.equal(submittedSearches[0]?.get("WeeklyFromDate"), "07/01/2030");
+    assert.equal(submittedSearches[0]?.get("WeeklyToDate"), "10/01/2030");
   } finally {
     globalThis.fetch = originalFetch;
   }

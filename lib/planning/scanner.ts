@@ -9,6 +9,15 @@ import { matchCountyLeads } from "./matching.ts";
 import { scoreSavedApplications } from "./scoring.ts";
 import type { PlanningSourceRecord } from "./types.ts";
 
+export type PlanningApplicationFetchOptions = {
+  now?: Date;
+  lookbackDays?: number;
+  maxPages?: number;
+  requestTimeoutMs?: number;
+  detailConcurrency?: number;
+  enrichDetails?: boolean;
+};
+
 export type SourceScanStats = {
   sourceRows: number;
   applicationsSaved: number;
@@ -119,16 +128,19 @@ export function planningSourceFromRow(row: any): PlanningSourceRecord {
   };
 }
 
-export async function fetchPlanningApplications(source: PlanningSourceRecord) {
+export async function fetchPlanningApplications(
+  source: PlanningSourceRecord,
+  options: PlanningApplicationFetchOptions = {}
+) {
   switch (source.adapter) {
     case "csv":
       return fetchCsvApplications(source);
     case "idox_public_access":
-      return fetchIdoxApplications(source);
+      return fetchIdoxApplications(source, options);
     case "custom":
       if (source.config.provider === "planit") return fetchPlanItApplications(source);
-      if (source.config.provider === "mastergov") return fetchMasterGovApplications(source);
-      if (source.config.provider === "assure") return fetchAssureApplications(source);
+      if (source.config.provider === "mastergov") return fetchMasterGovApplications(source, options);
+      if (source.config.provider === "assure") return fetchAssureApplications(source, options);
       throw new Error(`Unsupported custom planning source provider: ${source.config.provider ?? "unknown"}`);
     default:
       throw new Error(`Unsupported planning source adapter: ${source.adapter}`);
