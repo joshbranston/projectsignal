@@ -5,7 +5,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     <div className="app-shell">
       <aside className="sidebar">
         <Link className="brand" href="/dashboard">ProjectSignal</Link>
-        <Link className="side-link" href="/dashboard">Opportunities</Link>
+        <Link className="side-link" href="/dashboard">Today</Link>
+        <Link className="side-link" href="/dashboard/opportunities">Opportunities</Link>
         <Link className="side-link" href="/dashboard/territory">Territory map</Link>
         <Link className="side-link" href="/dashboard/settings">Territory & billing</Link>
         <form action="/auth/signout" method="post" style={{ marginTop: 30 }}>
