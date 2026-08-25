@@ -11,4 +11,3 @@
 3. Create a local migration that extends legacy stages compatibly, adds state fields and notes, adds indexes/RLS, and creates narrowly granted authenticated RPCs with entitlement checks and audit events.
 4. Add a server-only repository/service that reads RLS-scoped opportunities and invokes the validated RPC boundary, propagating persistence errors.
 5. Verify migration text with the Supabase CLI when locally available; otherwise document the unavailable local database check.
-

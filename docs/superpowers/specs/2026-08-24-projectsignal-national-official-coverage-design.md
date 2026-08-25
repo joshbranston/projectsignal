@@ -79,4 +79,3 @@ The static catalogue is source-controlled and contains all 337 terminal classifi
 ## Verification
 
 Fixture tests cover taxonomy validation, discovery parsing, platform signatures, zero-unclassified enforcement, batch selection, pagination/completeness, redirect safety and redaction. Live verification is read-only and documented separately. Final gates are `npm test`, `npm run typecheck`, `npm run build`, and `git diff --check`.
-

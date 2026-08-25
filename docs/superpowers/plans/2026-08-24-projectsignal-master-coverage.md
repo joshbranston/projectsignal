@@ -13,4 +13,3 @@
 5. Add scoring/value fixtures for the required residential and negative-signal cases, verify failures, then make the smallest scoring changes.
 6. Generate the complete authority/county inventory and platform/scheduler documentation from public registry data.
 7. Run focused tests, then the complete Phase 1 verification suite.
-

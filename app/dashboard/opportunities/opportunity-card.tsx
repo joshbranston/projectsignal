@@ -8,7 +8,6 @@ function date(value: string | null) {
   if (!value) return "Date unavailable";
   return new Intl.DateTimeFormat("en-GB", { dateStyle: "medium" }).format(new Date(value));
 }
-
 function preserveFields(opportunity: CustomerOpportunityDetail) {
   return (
     <>
@@ -68,4 +67,3 @@ export function OpportunityCard({ opportunity }: { opportunity: CustomerOpportun
     </article>
   );
 }
-
