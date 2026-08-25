@@ -214,6 +214,49 @@ test("fetchPlanningApplications dispatches ASSURE custom sources to the ASSURE a
 });
 
 
+test("fetchPlanningApplications dispatches StatMap HorizoNext custom sources", async () => {
+  const originalFetch = globalThis.fetch;
+  const statMapSource: PlanningSourceRecord = {
+    ...source("east-staffordshire"), adapter: "custom",
+    endpointUrl: "https://east.example.test/horizoNext/publicportal", format: "json",
+    config: { provider: "statmap_horizon", lookbackDays: 7, maxPages: 1, enrichDetails: false }
+  };
+  globalThis.fetch = async (input) => {
+    assert.match(String(input), /\/horizoNext\/api\/publicportal\/planningApplications\/pageRequest$/);
+    return Response.json({ total: 1, records: [{
+      id: 101, name: "P/2026/0101", address: "Burton DE14 1AA",
+      proposal: "Replacement windows", receivedDate: "2026-08-20T00:00:00",
+      applicationTypeId_relatedRecord: { name: "Householder" }
+    }] });
+  };
+  try {
+    const applications = await fetchPlanningApplications(statMapSource, { now: new Date("2026-08-24T12:00:00Z") });
+    assert.equal(applications[0].externalReference, "P/2026/0101");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("fetchPlanningApplications dispatches Agile Applications custom sources", async () => {
+  const originalFetch = globalThis.fetch;
+  const agileSource: PlanningSourceRecord = {
+    ...source("cannock"), adapter: "custom",
+    endpointUrl: "https://planning.agileapplications.co.uk/cannock", format: "json",
+    config: { provider: "agile_applications", lookbackDays: 7, enrichDetails: false }
+  };
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/api/client/get")) return Response.json({ value: "public-client" });
+    if (url.includes("/api/configuration/API_URL")) return Response.json({ value: "https://planningapi.agileapplications.co.uk" });
+    return Response.json({ total: 1, results: [{
+      id: 321, reference: "CH/26/0321", proposal: "Replacement windows",
+      location: "Cannock WS11 1AA", validDate: "2026-08-20T00:00:00"
+    }] });
+  };
+  try {
+    const applications = await fetchPlanningApplications(agileSource, { now: new Date("2026-08-24T12:00:00Z") });
+    assert.equal(applications[0].externalReference, "CH/26/0321");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("planningSourceFromRow parses flat claimed-source rows with lease metadata", () => {
   const parsed = planningSourceFromRow({
     id: "source-1",

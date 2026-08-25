@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { fetchAssureApplications } from "./adapters/assure.ts";
+import { fetchAgileApplications } from "./adapters/agile.ts";
 import { fetchCsvApplications } from "./adapters/csv.ts";
 import { fetchIdoxApplications } from "./adapters/idox.ts";
 import { fetchMasterGovApplications } from "./adapters/mastergov.ts";
 import { fetchPlanItApplications } from "./adapters/planit.ts";
+import { fetchStatMapApplications } from "./adapters/statmap.ts";
 import { ingestApplications } from "./ingest.ts";
 import { matchCountyLeads } from "./matching.ts";
 import { scoreSavedApplications } from "./scoring.ts";
@@ -141,6 +143,8 @@ export async function fetchPlanningApplications(
       if (source.config.provider === "planit") return fetchPlanItApplications(source);
       if (source.config.provider === "mastergov") return fetchMasterGovApplications(source, options);
       if (source.config.provider === "assure") return fetchAssureApplications(source, options);
+      if (source.config.provider === "statmap_horizon") return fetchStatMapApplications(source, options);
+      if (source.config.provider === "agile_applications") return fetchAgileApplications(source, options);
       throw new Error(`Unsupported custom planning source provider: ${source.config.provider ?? "unknown"}`);
     default:
       throw new Error(`Unsupported planning source adapter: ${source.adapter}`);

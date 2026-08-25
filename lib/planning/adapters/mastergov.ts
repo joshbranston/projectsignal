@@ -584,6 +584,12 @@ export async function fetchMasterGovApplications(
       `(portal=${source.councilSlug}, host=${new URL(baseUrl).hostname})`
     );
   }
+  if (firstPage.resultCount !== null && firstPage.pageUrls.length > Math.max(0, maxPages - 1)) {
+    throw new Error(
+      `${source.councilName} MasterGov page cap cannot prove complete advertised total ${firstPage.resultCount} ` +
+      `(portal=${source.councilSlug}, host=${new URL(baseUrl).hostname})`
+    );
+  }
 
   const byReference = new Map<string, MasterGovSearchApplication>();
   for (const application of firstPage.applications) byReference.set(application.externalReference, application);
@@ -624,6 +630,12 @@ export async function fetchMasterGovApplications(
   }
 
   const rows = [...byReference.values()];
+  if (firstPage.resultCount !== null && rows.length !== firstPage.resultCount) {
+    throw new Error(
+      `${source.councilName} MasterGov total mismatch: advertised ${firstPage.resultCount}, retrieved ${rows.length} ` +
+      `(portal=${source.councilSlug}, host=${new URL(baseUrl).hostname})`
+    );
+  }
   if (!enrichDetails) return rows;
   const enriched = new Array<NormalisedPlanningApplication>(rows.length);
   let nextIndex = 0;

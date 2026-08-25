@@ -37,8 +37,8 @@ function resultRow(reference: string) {
   </tr>`;
 }
 
-function resultPage(references: string[], pageLinks = "") {
-  return `<div>${references.length} results found</div><table><thead><tr>
+function resultPage(references: string[], pageLinks = "", advertisedTotal = references.length) {
+  return `<div>${advertisedTotal} results found</div><table><thead><tr>
     <th>Application Number</th><th>Site Ref (PPRN)</th><th>Location</th>
     <th>Description</th><th>Date Validated</th><th>Decision Date</th><th>Status Decision</th>
   </tr></thead><tbody>${references.map(resultRow).join("")}</tbody></table>${pageLinks}`;
@@ -201,8 +201,7 @@ test("fetchMasterGovApplications accepts the disclaimer, carries cookies, and us
   const calls: Array<{ url: string; method: string; headers: Headers; body: string }> = [];
   let standardSearchVisits = 0;
   const pageLinks = [
-    '<a href="/Search/ResultsPage/2?module=PLA&amp;tabOrder=0">2</a>',
-    '<a href="/Search/ResultsPage/3?module=PLA&amp;tabOrder=0">3</a>'
+    '<a href="/Search/ResultsPage/2?module=PLA&amp;tabOrder=0">2</a>'
   ].join("");
 
   globalThis.fetch = async (input, init = {}) => {
@@ -255,7 +254,7 @@ test("fetchMasterGovApplications accepts the disclaimer, carries cookies, and us
 
     if (parsed.pathname === "/Search/Results") {
       assert.match(headers.get("cookie") ?? "", /AcceptedDisclaimer=accepted-secret/);
-      return responseAt(url, resultPage(["20261245"], pageLinks), {
+      return responseAt(url, resultPage(["20261245"], pageLinks, 2), {
         headers: { "content-type": "text/html; charset=utf-8" }
       });
     }
@@ -263,7 +262,7 @@ test("fetchMasterGovApplications accepts the disclaimer, carries cookies, and us
     if (parsed.pathname === "/Search/ResultsPage/2") {
       assert.equal(headers.get("x-requested-with"), "XMLHttpRequest");
       assert.match(headers.get("referer") ?? "", /\/Search\/Results$/);
-      return responseAt(url, resultPage(["20261246"]));
+      return responseAt(url, resultPage(["20261246"], "", 2));
     }
 
     if (parsed.pathname === "/Planning/Display/20261245") {
@@ -293,6 +292,35 @@ test("fetchMasterGovApplications accepts the disclaimer, carries cookies, and us
     assert.match(String((applications[1].rawPayload as { enrichmentError?: string }).enrichmentError), /status=503/);
     assert.doesNotMatch(JSON.stringify(applications[1].rawPayload), /private body marker/);
     assert.equal(calls.some((call) => new URL(call.url).pathname === "/Search/ResultsPage/3"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("fetchMasterGovApplications fails closed when page cap or advertised total prevents completeness", async () => {
+  const originalFetch = globalThis.fetch;
+  const pageLinks = [2, 3].map((page) =>
+    `<a href="/Search/ResultsPage/${page}?module=PLA">${page}</a>`
+  ).join("");
+  globalThis.fetch = async (input) => responseAt(
+    String(input),
+    resultPage(["20261245"], pageLinks, 3)
+  );
+  try {
+    await assert.rejects(
+      fetchMasterGovApplications(leicesterSource, { maxPages: 2, enrichDetails: false }),
+      /page cap cannot prove complete advertised total 3/
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  globalThis.fetch = async (input) => responseAt(String(input), resultPage(["20261245"], "", 2));
+  try {
+    await assert.rejects(
+      fetchMasterGovApplications(leicesterSource, { maxPages: 2, enrichDetails: false }),
+      /total mismatch: advertised 2, retrieved 1/
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }

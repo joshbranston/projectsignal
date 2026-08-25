@@ -64,6 +64,20 @@ test("parsePlanningSourceTestArgs accepts adapter configuration without weakenin
   });
 });
 
+test("parsePlanningSourceTestArgs accepts the two official JSON planning providers", () => {
+  for (const [provider, endpoint] of [
+    ["statmap_horizon", "https://eaststaffs-publicportal.statmap.co.uk/horizoNext/publicportal"],
+    ["agile_applications", "https://planning.agileapplications.co.uk/cannock"]
+  ]) {
+    const options = parsePlanningSourceTestArgs([
+      "--adapter", "custom", "--provider", provider, "--endpoint", endpoint,
+      "--lookback-days", "7", "--max-pages", "10"
+    ]);
+    assert.equal(options.provider, provider);
+    assert.equal(options.endpoint, endpoint);
+  }
+});
+
 test("runPlanningSourceTest uses in-memory dispatch options and returns only the bounded window", async () => {
   const options = parsePlanningSourceTestArgs([
     "--adapter", "custom",

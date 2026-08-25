@@ -8,7 +8,7 @@ import type {
 
 export type PlanningSourceTestOptions = {
   adapter: "csv" | "idox_public_access" | "custom";
-  provider: "planit" | "mastergov" | "assure" | null;
+  provider: "planit" | "mastergov" | "assure" | "statmap_horizon" | "agile_applications" | null;
   endpoint: string;
   config: PlanningSourceConfig;
   lookbackDays: number;
@@ -109,8 +109,10 @@ export function parsePlanningSourceTestArgs(argv: string[]): PlanningSourceTestO
     throw new Error("--adapter must be csv, idox_public_access, or custom");
   }
   const provider = values.get("--provider") ?? null;
-  if (adapter === "custom" && !["planit", "mastergov", "assure"].includes(provider ?? "")) {
-    throw new Error("--provider must be planit, mastergov, or assure for custom adapters");
+  if (adapter === "custom" && ![
+    "planit", "mastergov", "assure", "statmap_horizon", "agile_applications"
+  ].includes(provider ?? "")) {
+    throw new Error("--provider must be planit, mastergov, assure, statmap_horizon, or agile_applications for custom adapters");
   }
   if (adapter !== "custom" && provider) {
     throw new Error("--provider is only valid with --adapter custom");
@@ -186,7 +188,11 @@ function testSource(options: PlanningSourceTestOptions): PlanningSourceRecord {
     slug: "cli",
     adapter: options.adapter,
     endpointUrl: options.endpoint,
-    format: options.adapter === "csv" ? "csv" : options.provider === "planit" ? "json" : "html",
+    format: options.adapter === "csv"
+      ? "csv"
+      : ["planit", "statmap_horizon", "agile_applications"].includes(options.provider ?? "")
+        ? "json"
+        : "html",
     config: {
       ...options.config,
       ...(options.provider ? { provider: options.provider } : {}),
