@@ -25,7 +25,7 @@ export default async function SettingsPage() {
         </div>
       </div>
 
-      <div className="grid3" style={{ gridTemplateColumns: "1fr 1fr" }}>
+      <div className="grid3 settings-grid">
         <div className="panel">
           <h3>Subscription territory</h3>
           {counties.length ? (
