@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { analyseWindowsApplication } from "../../lib/planning/scoring.ts";
+import { scoreWindowsOpportunity } from "../../lib/scoring.ts";
 
 const base = {
   id: "app-1",
@@ -96,4 +97,69 @@ test("telecom pole remains excluded despite being a live application", () => {
   });
 
   assert.equal(result, null);
+});
+
+test("replacement dwelling is a high-value high-priority fenestration opportunity", () => {
+  const result = scoreWindowsOpportunity(
+    "Demolition of existing house and erection of a replacement dwelling",
+    "Rural Lane, Staffordshire ST18 0AA",
+    "Pending"
+  );
+
+  assert.ok(result.score >= 7, `expected replacement dwelling score >= 7, got ${result.score}`);
+  assert.ok(result.minValue >= 15000);
+  assert.match(result.reason, /replacement dwelling/i);
+});
+
+test("bungalow and rural-worker dwelling wording retains the new-home signal", () => {
+  for (const proposal of [
+    "Erection of a detached bungalow with garage",
+    "Erection of a rural worker dwelling and associated access",
+    "Erection of a rural worker’s dwelling and associated access"
+  ]) {
+    const result = scoreWindowsOpportunity(proposal, "Staffordshire ST18 0AA", "Pending");
+    assert.ok(result.score >= 5.5, `expected residential score >= 5.5 for ${proposal}, got ${result.score}`);
+    assert.ok(result.minValue >= 10000);
+  }
+});
+
+test("outline status reduces confidence without hiding a multi-unit housing signal", () => {
+  const detailed = scoreWindowsOpportunity(
+    "Full application for erection of 10 dwellings",
+    "Example Road",
+    "Pending"
+  );
+  const outline = scoreWindowsOpportunity(
+    "Outline application for erection of 10 dwellings",
+    "Example Road",
+    "Pending"
+  );
+
+  assert.ok(outline.score >= 5.5);
+  assert.ok(outline.score < detailed.score, `${outline.score} should be below ${detailed.score}`);
+  assert.deepEqual([outline.minValue, outline.maxValue], [50000, 250000]);
+});
+
+test("value estimates distinguish a single door from several windows and larger projects", () => {
+  const door = scoreWindowsOpportunity("Replacement of one front door", "Example Road", "Pending");
+  const windows = scoreWindowsOpportunity("Replacement of eight windows", "Example Road", "Pending");
+  const conservatory = scoreWindowsOpportunity("Erection of a conservatory", "Example Road", "Pending");
+  const dwelling = scoreWindowsOpportunity("Erection of a new dwelling", "Example Road", "Pending");
+
+  assert.deepEqual([door.minValue, door.maxValue], [1500, 5000]);
+  assert.deepEqual([windows.minValue, windows.maxValue], [4000, 15000]);
+  assert.deepEqual([conservatory.minValue, conservatory.maxValue], [8000, 25000]);
+  assert.deepEqual([dwelling.minValue, dwelling.maxValue], [10000, 30000]);
+});
+
+test("generic conditions remain low while explicit glazing conditions rank higher", () => {
+  const generic = scoreWindowsOpportunity("Discharge of condition 3", "Example Road", "Pending");
+  const glazing = scoreWindowsOpportunity(
+    "Discharge of condition 3 relating to replacement windows and doors",
+    "Example Road",
+    "Pending"
+  );
+
+  assert.equal(generic.priority, "LOW");
+  assert.ok(glazing.score > generic.score);
 });

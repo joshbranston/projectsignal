@@ -29,8 +29,9 @@ const impliedProjectRules: Array<[RegExp, number, string]> = [
     "two-storey extension"
   ],
   [/\b\d+\s+(?:new\s+)?dwellings?\b|\bresidential development\b/i, 5.8, "multi-unit residential"],
+  [/\breplacement dwelling\b/i, 5.8, "replacement dwelling"],
   [
-    /\bnew build\b|\bnew dwelling\b|\berection of (?:a |an |one )?dwelling\b/i,
+    /\bnew build\b|\bnew dwelling\b|\berection of (?:a |an |one )?dwelling\b|\berection of (?:a |an )?(?:detached |semi-detached )?bungalow\b|\brural worker(?:s|['’]s|s['’])? dwelling\b/i,
     5.5,
     "new dwelling"
   ],
@@ -58,7 +59,9 @@ const negativeRules: Array<[RegExp, number, string]> = [
   [/\btelecom\b|\bantenna\b|\bmast\b/i, -4, "telecoms"],
   [/\bchange of use\b/i, -1.7, "change of use"],
   [/\bhouse in multiple occupation\b|\bHMO\b/i, -2.5, "HMO"],
-  [/\bdischarge of conditions?\b|\bvariation of condition\b/i, -2.5, "conditions"]
+  [/\bdischarge of conditions?\b|\bvariation of condition\b/i, -2.5, "conditions"],
+  [/\boutline (?:planning )?application\b/i, -1.5, "outline stage"],
+  [/\bscreening opinion\b/i, -2.5, "screening opinion"]
 ];
 
 function valueBand(text: string) {
@@ -70,11 +73,14 @@ function valueBand(text: string) {
     if (n >= 3) return [25000, 100000] as const;
     return [15000, 50000] as const;
   }
-  if (/new dwelling|new build|erection of (?:a |an |one )?dwelling/.test(t)) return [10000, 30000] as const;
+  if (/replacement dwelling/.test(t)) return [15000, 40000] as const;
+  if (/new dwelling|new build|erection of (?:a |an |one )?dwelling|erection of (?:a |an )?(?:detached |semi-detached )?bungalow|rural worker(?:s|['’]s|s['’])? dwelling/.test(t)) return [10000, 30000] as const;
   if (/first[- ]floor|two[- ]storey/.test(t)) return [8000, 25000] as const;
   if (/bifold|bi-fold|glazing|replacement windows/.test(t)) return [5000, 20000] as const;
+  if (/\breplacement of (?:one |1 |a )?(?:front |rear |side |external )?door\b|\bsingle (?:front |rear |side |external )?door\b/.test(t)) return [1500, 5000] as const;
+  if (/\b(?:replacement of )?(?:several|multiple|two|three|four|five|six|seven|eight|nine|ten|\d+) windows?\b/.test(t)) return [4000, 15000] as const;
   if (/single[- ]storey|rear extension|side extension|front extension|extension/.test(t)) return [5000, 15000] as const;
-  if (/conservatory|orangery/.test(t)) return [5000, 15000] as const;
+  if (/conservatory|orangery/.test(t)) return [8000, 25000] as const;
   if (/dormer|loft conversion/.test(t)) return [5000, 15000] as const;
   if (/conversion/.test(t)) return [5000, 20000] as const;
   if (/shopfront/.test(t)) return [5000, 25000] as const;
