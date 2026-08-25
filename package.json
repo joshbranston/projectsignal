@@ -8,7 +8,13 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test tests/**/*.test.ts",
-    "planning:test-source": "node --experimental-strip-types scripts/test-planning-source.ts"
+    "planning:test-source": "node --experimental-strip-types scripts/test-planning-source.ts",
+    "planning:test-coverage": "node --experimental-strip-types scripts/test-planning-coverage.ts",
+    "planning:generate-coverage": "node --experimental-strip-types scripts/generate-planning-coverage.ts",
+    "planning:investigate-coverage": "node --experimental-strip-types scripts/investigate-planning-coverage.ts",
+    "planning:probe-portals": "node --experimental-strip-types scripts/probe-planning-portals.ts",
+    "planning:verify-discovered": "node --experimental-strip-types scripts/verify-discovered-planning-sources.ts",
+    "planning:generate-catalogue": "node --experimental-strip-types scripts/generate-official-source-catalogue.ts"
   },
   "dependencies": {
     "@supabase/ssr": "latest",
@@ -21,6 +27,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.7",
     "@types/node": "^26.2.0",
     "@types/react": "latest",
     "@types/react-dom": "latest",
