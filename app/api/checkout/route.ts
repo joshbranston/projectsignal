@@ -1,33 +1,41 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stripeClient } from "@/lib/stripe";
+import {
+  billingDatabaseError,
+  configuredStripePriceId,
+  safeBillingDiagnostic
+} from "@/lib/billing/checkout";
 
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
 
-    const { data: claimsData } = await supabase.auth.getClaims();
+    const { data: claimsData, error: claimsError } = await supabase.auth.getClaims();
+    if (claimsError) throw billingDatabaseError("read_auth_claims", claimsError);
     const claims = claimsData?.claims;
 
     if (!claims?.sub) {
       return NextResponse.redirect(new URL("/login", request.url), 303);
     }
 
-    const { data: membership } = await supabase
+    const { data: membership, error: membershipError } = await supabase
       .from("company_members")
       .select("company_id")
       .eq("user_id", claims.sub)
       .maybeSingle();
+    if (membershipError) throw billingDatabaseError("read_company_membership", membershipError);
 
     if (!membership) {
       return NextResponse.redirect(new URL("/onboarding", request.url), 303);
     }
 
-    const { data: subscription } = await supabase
+    const { data: subscription, error: subscriptionError } = await supabase
       .from("subscriptions")
       .select("*")
       .eq("company_id", membership.company_id)
       .single();
+    if (subscriptionError) throw billingDatabaseError("read_subscription", subscriptionError);
 
     if (subscription?.status === "active") {
       return NextResponse.redirect(new URL("/dashboard", request.url), 303);
@@ -35,9 +43,7 @@ export async function POST(request: Request) {
 
     const stripe = stripeClient();
 
-    const priceId =
-      process.env.STRIPE_PRICE_ID?.trim() ||
-      "price_1U7WrIDIbWZDEkGRmC5yqD9s";
+    const priceId = configuredStripePriceId(process.env.STRIPE_PRICE_ID);
 
     const siteUrl =
       process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
@@ -50,7 +56,7 @@ export async function POST(request: Request) {
           quantity: 1
         }
       ],
-      success_url: `${siteUrl}/dashboard?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      success_url: `${siteUrl}/dashboard?checkout=success`,
       cancel_url: `${siteUrl}/dashboard?checkout=cancelled`,
       client_reference_id: membership.company_id,
       customer: subscription?.provider_customer_id || undefined,
@@ -78,11 +84,10 @@ export async function POST(request: Request) {
 
     return NextResponse.redirect(session.url, 303);
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Checkout unavailable";
-
-    console.error("Stripe checkout error:", error);
-
-    return NextResponse.json({ error: message }, { status: 503 });
+    console.error("Stripe checkout unavailable", safeBillingDiagnostic(error));
+    return NextResponse.json(
+      { error: "Checkout is temporarily unavailable. Please try again." },
+      { status: 503 }
+    );
   }
 }

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { stripeClient } from "@/lib/stripe";
+import { safeBillingDiagnostic } from "@/lib/billing/checkout";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -27,12 +28,17 @@ export async function POST(request: Request) {
     return NextResponse.redirect(new URL("/dashboard", request.url), 303);
   }
 
-  const stripe = stripeClient();
-  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
-  const session = await stripe.billingPortal.sessions.create({
-    customer: subscription.provider_customer_id,
-    return_url: `${siteUrl}/dashboard/settings`
-  });
+  try {
+    const stripe = stripeClient();
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
+    const session = await stripe.billingPortal.sessions.create({
+      customer: subscription.provider_customer_id,
+      return_url: `${siteUrl}/dashboard/settings`
+    });
 
-  return NextResponse.redirect(session.url, 303);
+    return NextResponse.redirect(session.url, 303);
+  } catch (error) {
+    console.error("Stripe billing portal unavailable", safeBillingDiagnostic(error));
+    return NextResponse.redirect(new URL("/dashboard/settings?billing=unavailable", request.url), 303);
+  }
 }
