@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { buildDailyOpportunityDigest } from "@/lib/notifications/digest";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -7,13 +8,6 @@ export const maxDuration = 60;
 function authorized(request: Request) {
   const secret = process.env.CRON_SECRET;
   return Boolean(secret && request.headers.get("authorization") === `Bearer ${secret}`);
-}
-
-function money(min?: number | null, max?: number | null) {
-  const fmt = (n: number) => n >= 1000 ? `£${Math.round(n/1000)}k` : `£${n}`;
-  if (min && max) return `${fmt(min)}–${fmt(max)}`;
-  if (min || max) return fmt((min || max)!);
-  return "Value not estimated";
 }
 
 export async function GET(request: Request) {
@@ -47,29 +41,13 @@ export async function GET(request: Request) {
       .eq("company_id", company.id)
       .is("first_delivered_at", null)
       .order("score", { ascending: false })
-      .limit(10);
+      .limit(5);
 
     if (!leads?.length) continue;
 
-    const cards = leads.map((lead: any) => `
-      <div style="border:1px solid #e4e7ec;border-radius:12px;padding:16px;margin:0 0 12px">
-        <strong>${lead.score}/10 · ${lead.priority}</strong>
-        <h2 style="font-size:18px;margin:7px 0">${lead.address || lead.postcode || "Planning opportunity"}</h2>
-        <div><b>${money(lead.estimated_value_min_gbp, lead.estimated_value_max_gbp)}</b> estimated opportunity</div>
-        <p>${lead.proposal || ""}</p>
-        <p style="color:#667085">${lead.why_it_matches || ""}</p>
-      </div>
-    `).join("");
-
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "";
-    const html = `
-      <div style="font-family:Arial,sans-serif;max-width:700px;margin:auto;color:#111827">
-        <div style="font-weight:800">ProjectSignal</div>
-        <h1>${leads.length} new opportunities for ${company.name}</h1>
-        ${cards}
-        <p><a href="${siteUrl}/dashboard">Open your ProjectSignal dashboard</a></p>
-      </div>
-    `;
+    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || new URL(request.url).origin;
+    const digest = buildDailyOpportunityDigest({ companyName: company.name, leads, siteUrl });
+    if (!digest) continue;
 
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -80,8 +58,8 @@ export async function GET(request: Request) {
       body: JSON.stringify({
         from,
         to: [company.billing_email],
-        subject: `ProjectSignal: ${leads.length} new opportunities`,
-        html
+        subject: digest.subject,
+        html: digest.html
       })
     });
 
@@ -92,13 +70,13 @@ export async function GET(request: Request) {
       await admin
         .from("customer_leads")
         .update({ first_delivered_at: now, last_delivered_at: now })
-        .in("id", leads.map((l: any) => l.id));
+        .in("id", digest.leadIds);
 
       await admin.from("email_deliveries").upsert({
         company_id: company.id,
         recipient_email: company.billing_email,
         delivery_date: now.slice(0,10),
-        lead_count: leads.length,
+        lead_count: digest.leadIds.length,
         status: "sent",
         provider_message_id: result.id ?? null,
         sent_at: now
@@ -109,7 +87,7 @@ export async function GET(request: Request) {
         company_id: company.id,
         recipient_email: company.billing_email,
         delivery_date: now.slice(0,10),
-        lead_count: leads.length,
+        lead_count: digest.leadIds.length,
         status: "failed",
         error_message: result.message ?? "Email provider error"
       }, { onConflict: "company_id,recipient_email,delivery_date" });

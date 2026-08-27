@@ -1,4 +1,17 @@
 const postcodePattern = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+const multiDwellingPattern = /\b(\d+)\s*(?:no\.?\s*)?(?:\d+\s*[- ]?\s*bed(?:room)?\s+)?(?:new\s+)?dwellings?\b/i;
+
+const hardExclusionRules: Array<[RegExp, string]> = [
+  [
+    /\b(?:discharge|approval) of conditions?\b|\bdetails pursuant to conditions?\b|\bnon[- ]material amendment\b|\bsection 73\b|\bvariation of conditions?\b/i,
+    "administrative follow-on application"
+  ],
+  [
+    /\badvert(?:isement|ising)\b|\bsignage\b|\billuminated (?:fascia )?sign\b|\bwindow manifestations?\b/i,
+    "advertising/signage"
+  ],
+  [/\btree works?\b|\bcrown lift\b|\bsycamore\b|\boak\b|\btelecom\b|\bantenna\b|\bmast\b/i, "non-building works"]
+];
 
 export function extractPostcode(address: string) {
   const match = address.match(postcodePattern);
@@ -28,7 +41,7 @@ const impliedProjectRules: Array<[RegExp, number, string]> = [
     5.5,
     "two-storey extension"
   ],
-  [/\b\d+\s+(?:new\s+)?dwellings?\b|\bresidential development\b/i, 5.8, "multi-unit residential"],
+  [new RegExp(`${multiDwellingPattern.source}|\\bresidential development\\b`, "i"), 5.8, "multi-unit residential"],
   [/\breplacement dwelling\b/i, 5.8, "replacement dwelling"],
   [
     /\bnew build\b|\bnew dwelling\b|\berection of (?:a |an |one )?dwelling\b|\berection of (?:a |an )?(?:detached |semi-detached )?bungalow\b|\brural worker(?:s|['’]s|s['’])? dwelling\b/i,
@@ -66,7 +79,7 @@ const negativeRules: Array<[RegExp, number, string]> = [
 
 function valueBand(text: string) {
   const t = text.toLowerCase();
-  const multi = t.match(/\b(\d+)\s+(?:new\s+)?dwellings?\b/);
+  const multi = t.match(multiDwellingPattern);
   if (multi) {
     const n = Number(multi[1]);
     if (n >= 10) return [50000, 250000] as const;
@@ -89,6 +102,39 @@ function valueBand(text: string) {
 
 export function scoreWindowsOpportunity(proposal: string, address = "", decision = "") {
   const text = `${proposal} ${address}`;
+
+  for (const [rule, reason] of hardExclusionRules) {
+    if (rule.test(proposal)) {
+      return {
+        score: 0,
+        stage: "Review not required",
+        priority: "LOW",
+        minValue: 0,
+        maxValue: 0,
+        reason: `Excluded: ${reason}.`,
+        recommended: "Do not treat this record as a new sales opportunity.",
+        postcode: extractPostcode(address)
+      };
+    }
+  }
+
+  if (
+    /\bgarage\b/i.test(proposal) &&
+    /\b(?:replacement garage|erection of (?:a |an )?(?:replacement )?garage)\b/i.test(proposal) &&
+    !/\b(?:conversion|dwelling|extension|windows?|doors?|glaz(?:e|ed|ing))\b/i.test(proposal)
+  ) {
+    return {
+      score: 0,
+      stage: "Review not required",
+      priority: "LOW",
+      minValue: 0,
+      maxValue: 0,
+      reason: "Excluded: garage-only work.",
+      recommended: "Do not treat this record as a fenestration opportunity.",
+      postcode: extractPostcode(address)
+    };
+  }
+
   let score = 1;
   const positives: string[] = [];
   const negatives: string[] = [];

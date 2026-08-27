@@ -152,14 +152,46 @@ test("value estimates distinguish a single door from several windows and larger 
   assert.deepEqual([dwelling.minValue, dwelling.maxValue], [10000, 30000]);
 });
 
-test("generic conditions remain low while explicit glazing conditions rank higher", () => {
-  const generic = scoreWindowsOpportunity("Discharge of condition 3", "Example Road", "Pending");
-  const glazing = scoreWindowsOpportunity(
-    "Discharge of condition 3 relating to replacement windows and doors",
+test("administrative follow-on applications never become sales opportunities", () => {
+  for (const proposal of [
+    "Discharge of Condition 11 (external materials and windows) of planning application 2025/0752/FUL",
+    "Approval of Condition 5 - Windows and Doors - pursuant to 25/02477/HOU",
+    "Non-material amendment to change window and door colour from white to green",
+    "Section 73 variation of condition 2 to alter approved windows"
+  ]) {
+    assert.equal(analyseWindowsApplication({ ...base, proposal, decision: "Pending" }), null, proposal);
+  }
+});
+
+test("advertising-only and garage-only applications remain excluded", () => {
+  for (const proposal of [
+    "Internally illuminated fascia sign above doors and DDA compliant window manifestations",
+    "Demolition of garage and erection of a replacement garage"
+  ]) {
+    assert.equal(analyseWindowsApplication({ ...base, proposal, decision: "Pending" }), null, proposal);
+  }
+});
+
+test("common numbered dwelling wording receives the multi-unit signal and value band", () => {
+  const result = scoreWindowsOpportunity(
+    "Demolition of existing buildings and erection of 5 no. 3 bedroom dwellings, including parking",
     "Example Road",
     "Pending"
   );
 
-  assert.equal(generic.priority, "LOW");
-  assert.ok(glazing.score > generic.score);
+  assert.ok(result.score >= 7, `expected multi-unit score >= 7, got ${result.score}`);
+  assert.deepEqual([result.minValue, result.maxValue], [25000, 100000]);
+  assert.match(result.reason, /multi-unit residential/i);
+});
+
+test("exclusion keywords in an address do not suppress a valid building proposal", () => {
+  const result = analyseWindowsApplication({
+    ...base,
+    proposal: "Erection of a two-storey rear extension with new windows and bifold doors",
+    address: "14 Oak Road, Example Town, LE1 1AA",
+    decision: "Pending"
+  });
+
+  assert.ok(result);
+  assert.ok(result.score >= 5.5);
 });

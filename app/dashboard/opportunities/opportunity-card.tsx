@@ -28,7 +28,7 @@ export function OpportunityCard({ opportunity }: { opportunity: CustomerOpportun
       <div className="opportunity-card-main">
         <div className="badge-row">
           <span className={`pill ${opportunity.priority.toLowerCase()}`}>
-            {opportunity.priority} · {opportunity.score}/10
+            {opportunity.priority}
           </span>
           <span className="stage-badge">{stageLabel(opportunity.status)}</span>
           {followUp !== "none" && <span className={`follow-up-badge ${followUp}`}>Follow-up {followUp}</span>}

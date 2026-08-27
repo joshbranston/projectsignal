@@ -136,7 +136,7 @@ export default async function OpportunityDetailPage({
           <div className="muted">{opportunity.address ?? opportunity.postcode ?? "Address unavailable"}</div>
         </div>
         <div className="badge-row">
-          <span className={`pill ${opportunity.priority.toLowerCase()}`}>{opportunity.priority} · {opportunity.score}/10</span>
+          <span className={`pill ${opportunity.priority.toLowerCase()}`}>{opportunity.priority}</span>
           <span className="stage-badge">{stageLabel(opportunity.status)}</span>
         </div>
       </div>

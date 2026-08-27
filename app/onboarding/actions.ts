@@ -14,9 +14,12 @@ export async function completeOnboarding(formData: FormData) {
   const addressLine2 = String(formData.get("address_line_2") ?? "").trim();
   const townCity = String(formData.get("town_city") ?? "").trim();
   const postcode = String(formData.get("postcode") ?? "").trim();
-  const tradeSlug = String(formData.get("trade_slug") ?? "windows-doors-bifolds");
-  const minimumScore = Number(formData.get("minimum_score") ?? 7);
-  const minOpportunity = Number(formData.get("min_opportunity_gbp") ?? 5000);
+  const tradeSlug = "windows-doors-bifolds";
+  // New customers receive all records qualified by the supported fenestration
+  // engine. Priority and value remain dashboard filters rather than permanently
+  // removing records during setup.
+  const minimumScore = 5.5;
+  const minOpportunity = 0;
   const requestedCounties = formData.getAll("county_slugs").map((value) => String(value));
 
   const { data: billingPlan } = await supabase

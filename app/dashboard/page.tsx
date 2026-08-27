@@ -51,7 +51,10 @@ function LegacyOpportunityFeed({
         </div>
       </div>
       {query.checkout === "success" && (
-        <div className="notice success">Payment received. Stripe is confirming your subscription and county access.</div>
+        <div className="notice success">Welcome to ProjectSignal. Stripe is confirming your subscription and preparing up to 30 days of recent opportunities in your counties.</div>
+      )}
+      {query.checkout === "cancelled" && (
+        <div className="notice">Checkout was cancelled. Your card was not charged and your county choices remain reserved.</div>
       )}
       <div className="notice" role="status">
         The opportunity manager database upgrade is pending. Your existing opportunity feed remains available read-only.
@@ -59,15 +62,15 @@ function LegacyOpportunityFeed({
       <div className="leads">
         {!leads.length && (
           <div className="panel">
-            <h3>No matched opportunities yet</h3>
-            <p className="muted">New entitled planning matches will appear here automatically.</p>
+            <h3>No opportunities match yet</h3>
+            <p className="muted">We checked the last 30 days and will keep monitoring your counties every day.</p>
           </div>
         )}
         {leads.map((lead) => (
           <article key={lead.id} className="dashboard-lead">
             <div>
               <span className={`pill ${String(lead.priority ?? "LOW").toLowerCase()}`}>
-                {lead.score}/10 · {lead.priority}
+                {lead.priority}
               </span>
               <h3 style={{ marginTop: 9 }}>{lead.title}</h3>
               <div className="muted" style={{ fontSize: 13 }}>
@@ -147,7 +150,10 @@ export default async function DashboardPage({
       </div>
 
       {query.checkout === "success" && (
-        <div className="notice success">Payment received. Stripe is confirming your subscription and county access.</div>
+        <div className="notice success">Welcome to ProjectSignal. Stripe is confirming your subscription and preparing up to 30 days of recent opportunities in your counties.</div>
+      )}
+      {query.checkout === "cancelled" && (
+        <div className="notice">Checkout was cancelled. Your card was not charged and your county choices remain reserved.</div>
       )}
 
       {!active ? (
@@ -155,7 +161,11 @@ export default async function DashboardPage({
           <div className="eyebrow">ProjectSignal Pro</div>
           <h2>Turn on your daily opportunity feed.</h2>
           <p className="muted">Your territory is reserved. Activate ProjectSignal Pro to receive and manage matched opportunities.</p>
-          <form action="/api/checkout" method="post"><button className="btn accent">Subscribe for £79/month</button></form>
+          {query.checkout === "success" ? (
+            <Link className="btn secondary" href="/dashboard">Refresh subscription status</Link>
+          ) : (
+            <form action="/api/checkout" method="post"><button className="btn accent">Subscribe for £79/month</button></form>
+          )}
         </div>
       ) : (
         <>

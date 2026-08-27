@@ -29,8 +29,8 @@ export default async function OnboardingPage({
     <div className="form-shell" style={{ maxWidth: 920 }}>
       <div className="brand">ProjectSignal</div>
       <div className="panel" style={{ marginTop: 24 }}>
-        <div className="eyebrow">Business setup</div>
-        <h2 style={{ marginTop: 8 }}>Choose the territory you want ProjectSignal to watch.</h2>
+        <div className="eyebrow">Set up your opportunity feed</div>
+        <h2 style={{ marginTop: 8 }}>Tell us about your business and choose your counties.</h2>
         <p className="muted">
           ProjectSignal Pro includes up to {countyLimit} England counties. Your selected counties become locked subscription territory once payment activates.
         </p>
@@ -59,45 +59,17 @@ export default async function OnboardingPage({
               <input id="postcode" name="postcode" placeholder="LE65 2JF" required />
             </div>
             <div className="field">
-              <label htmlFor="trade_slug">Trade</label>
-              <select id="trade_slug" name="trade_slug" defaultValue="windows-doors-bifolds">
-                <option value="windows-doors-bifolds">Windows, doors & bifolds</option>
-                <option value="builders">Builders</option>
-                <option value="roofing">Roofing</option>
-                <option value="solar">Solar & battery</option>
-                <option value="landscaping">Landscaping</option>
-                <option value="architects">Architects</option>
-              </select>
+              <label>Work type</label>
+              <div className="read-only-field">Windows, doors, bifolds, conservatories and residential glazing</div>
             </div>
           </div>
 
           <CountySelector counties={counties} countyLimit={countyLimit} />
 
-          <div className="grid3 onboarding-preferences-grid">
-            <div className="field">
-              <label htmlFor="minimum_score">Minimum ProjectSignal score</label>
-              <select id="minimum_score" name="minimum_score" defaultValue="7">
-                <option value="6">6+ — more opportunities</option>
-                <option value="7">7+ — recommended</option>
-                <option value="8">8+ — strongest only</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="min_opportunity_gbp">Minimum estimated opportunity</label>
-              <select id="min_opportunity_gbp" name="min_opportunity_gbp" defaultValue="5000">
-                <option value="0">Any value</option>
-                <option value="2500">£2,500+</option>
-                <option value="5000">£5,000+</option>
-                <option value="10000">£10,000+</option>
-                <option value="25000">£25,000+</option>
-              </select>
-            </div>
-          </div>
-
           <div className="notice">
-            Your county choices are reserved during setup and become active after Stripe confirms your £79/month ProjectSignal Pro subscription. Free county swapping is not available during the billing period.
+            You will see every qualifying MEDIUM, HIGH and HOT opportunity in these counties. Your choices are reserved now and become active after Stripe confirms your £79/month subscription. County switching is locked during each billing period.
           </div>
-          <button className="btn block">Create my ProjectSignal territory</button>
+          <button className="btn block">Save my business and counties</button>
         </form>
       </div>
     </div>
